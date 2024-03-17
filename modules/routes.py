@@ -9,7 +9,7 @@ from .utils import download_youtube_audio, get_auth_token
 
 router = APIRouter()
 
-@router.post("/test/")
+@router.post("/v1/test/", summary="Test Endpoint", description="A simple test endpoint to check the API's responsiveness.")
 async def test_api():
     try:
         current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -21,7 +21,7 @@ async def test_api():
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/v1/audio/language_detection/")
+@router.post("/v1/audio/language_detection/", summary="Language Detection endpoint", description="Endpoint to detect spoken langauge in provided clip or youtube video")
 async def language_detection(
     background_tasks: BackgroundTasks,
     file: Optional[UploadFile] = File(None),
@@ -46,7 +46,7 @@ async def language_detection(
     }
 
 
-@router.post("/v1/audio/transcriptions/")
+@router.post("/v1/audio/transcriptions/", summary="Transcription endpoint", description="Endpoint to transcribe audio in provided clip or youtube video")
 async def transcribe_upload_file(
     background_tasks: BackgroundTasks,
     file: Optional[UploadFile] = File(None),

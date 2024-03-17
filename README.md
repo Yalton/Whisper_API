@@ -105,6 +105,72 @@ To get a local copy up and running follow these simple steps. This project suppo
    docker compose up -d
    ```
 
+### Usage 
+
+Getting a basic transcription is easy, simply invoke the following request 
+
+```sh
+curl http://localhost:8000/v1/audio/transcriptions/ \
+  -H 'Authorization: auth_token' \
+  -H "Content-Type: multipart/form-data" \
+  -F 'file=@PickleRick-MasterChief.mp3;type=video/webm'
+```
+
+You will then receive a json respone resembling the following 
+
+```json
+{
+    "text": " This is Steve Downs, the voice of Master Chief Sierra 117.  Sir, I'm here to report that there's this guy named Rick.  And I kid you not, he turns himself into a pickle.  He's called Pickle Rick.  Funniest shit I've ever seen.  Glory to the GDI.  Chief, out.",
+    "task": "transcribe",
+    "language": "en",
+    "duration": 23.289625,
+    "language_probability": 0.9990234375,
+    "filename": "PickleRick-MasterChief.mp3"
+}
+```
+
+This can also be done with [youtube videos](https://www.youtube.com/watch?v=2Hm8MB9Jx1k)
+
+```sh
+curl http://localhost:8000/v1/audio/transcriptions/  \
+-H 'Authorization: auth_token' \
+-H "Content-Type: multipart/form-data"   \
+-F 'youtube_url=https://www.youtube.com/watch?v=2Hm8MB9Jx1k'
+```
+
+`Response` 
+
+```json
+{
+    "text": " I live in a low-income housing environment that goes by the government name of Section 8.  Me and a group of my allies control certain areas of this section in order to run our illegitimate business.  We possess unregistered firearms, stolen vehicles, mind-altering inhibitors, and only use cash for financial purchases.  If anyone would like to settle unfinished altercations, I will be more than happy to release my address.  I would like to warn you, I am a very dangerous person.  And I regularly disobey the law.",
+    "task": "transcribe",
+    "language": "en",
+    "duration": 32.357,
+    "language_probability": 0.994140625,
+    "filename": "https://www.youtube.com/watch?v=2Hm8MB9Jx1k"
+}
+```
+
+Gathering timestamps for the audio sample is also supported; there are two granularity parameters `segment` and `word`
+
+Segment breaks the clip up into segments and provides timestamps for those segments 
+
+Word breaks the clip up into words and provides timestamps for every detected word
+
+> Example of segment 
+
+```sh
+curl http://192.168.50.210:8000/v1/audio/transcriptions/ \
+  -H 'Authorization: auth_token' \
+  -H "Content-Type: multipart/form-data" \
+  -F 'youtube_url=https://www.youtube.com/watch?v=2Hm8MB9Jx1k'
+  -F "timestamp_granularities=segment" \
+  -F "response_format=verbose_json"
+```
+
+The response: [Response](docs/2Hm8MB9Jx1k.json)
+
+
 ### Configuration
 
 #### Environment Variables
