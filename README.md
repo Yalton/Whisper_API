@@ -8,23 +8,10 @@
 <div align="center">
   <a href="https://github.com/Yalton/Whisper_API">
     <!-- You can add a logo here -->
-    <img src="images/logo.png" alt="Logo" width="80" height="80">
   </a>
 
 <h3 align="center">Whisper API</h3>
 
-  <p align="center">
-    An advanced API for audio transcription and language detection, supporting direct uploads and YouTube URLs.
-    <br />
-    <a href="https://github.com/Yalton/Whisper_API"><strong>Explore the docs »</strong></a>
-    <br />
-    <br />
-    <a href="https://github.com/Yalton/Whisper_API">View Demo</a>
-    ·
-    <a href="https://github.com/Yalton/Whisper_API/issues">Report Bug</a>
-    ·
-    <a href="https://github.com/Yalton/Whisper_API/issues">Request Feature</a>
-  </p>
 </div>
 
 <!-- TABLE OF CONTENTS -->
@@ -49,8 +36,6 @@
 
 <!-- ABOUT THE PROJECT -->
 ## About The Project
-
-[![API Screenshot][product-screenshot]](https://example.com)
 
 This project aims to provide an easy to use self hostable solution for transcribing audio files either from local files or youtube videos. It uses [faster-whisper](https://github.com/SYSTRAN/faster-whisper.git) which is version of OpenAIs whisper model that is up to 4x as fast as the original model. 
 
@@ -170,25 +155,22 @@ Project Link: [https://github.com/Yalton/Whisper_API](https://github.com/Yalton/
 <!-- ACKNOWLEDGMENTS -->
 ## Acknowledgments
 
-- [OpenAI Whisper](https://github.com/openai/wh
-
-isper)
+- [OpenAI Whisper](https://github.com/openai/whisper)
 - [FastAPI](https://fastapi.tiangolo.com/)
 - [yt-dlp](https://github.com/yt-dlp/yt-dlp)
 - [Your additional resources or people]
 
 <!-- MARKDOWN LINKS & IMAGES -->
-[contributors-shield]: https://img.shields.io/github/contributors/Yalton/repo_name.svg?style=for-the-badge
-[contributors-url]: https://github.com/Yalton/repo_name/graphs/contributors
-[forks-shield]: https://img.shields.io/github/forks/Yalton/repo_name.svg?style=for-the-badge
-[forks-url]: https://github.com/Yalton/repo_name/network/members
-[stars-shield]: https://img.shields.io/github/stars/Yalton/repo_name.svg?style=for-the-badge
-[stars-url]: https://github.com/Yalton/repo_name/stargazers
-[issues-shield]: https://img.shields.io/github/issues/Yalton/repo_name.svg?style=for-the-badge
-[issues-url]: https://github.com/Yalton/repo_name/issues
-[license-shield]: https://img.shields.io/github/license/Yalton/repo_name.svg?style=for-the-badge
-[license-url]: https://github.com/Yalton/repo_name/blob/master/LICENSE.txt
+[contributors-shield]: https://img.shields.io/github/contributors/Yalton/Whisper_API.svg?style=for-the-badge
+[contributors-url]: https://github.com/Yalton/Whisper_API/graphs/contributors
+[forks-shield]: https://img.shields.io/github/forks/Yalton/Whisper_API.svg?style=for-the-badge
+[forks-url]: https://github.com/Yalton/Whisper_API/network/members
+[stars-shield]: https://img.shields.io/github/stars/Yalton/Whisper_API.svg?style=for-the-badge
+[stars-url]: https://github.com/Yalton/Whisper_API/stargazers
+[issues-shield]: https://img.shields.io/github/issues/Yalton/Whisper_API.svg?style=for-the-badge
+[issues-url]: https://github.com/Yalton/Whisper_API/issues
+[license-shield]: https://img.shields.io/github/license/Yalton/Whisper_API.svg?style=for-the-badge
+[license-url]: https://github.com/Yalton/Whisper_API/blob/master/LICENSE.txt
 [product-screenshot]: images/screenshot.png
-```
 
 Remember to replace placeholders (`Yalton`, `Whisper_API`, etc.) with your actual GitHub username, repository name, and other specific details about your project. This template provides a solid foundation for documenting your project and guiding users on how to install, use, and contribute to it.
