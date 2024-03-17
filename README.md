@@ -54,7 +54,7 @@ This section should list any major frameworks/libraries used to bootstrap your p
 - [FastAPI](https://fastapi.tiangolo.com/)
 - [yt-dlp](https://github.com/yt-dlp/yt-dlp)
 - [faster-whisper](https://github.com/SYSTRAN/faster-whisper.git)
-Certainly! Let's expand the "Getting Started" section to include details about setting up the project using Docker, emphasizing building the container, running it, and editing environment variables in the `docker-compose.yml` file.
+
 
 ## Getting Started
 
