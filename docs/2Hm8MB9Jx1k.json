@@ -1,0 +1,46 @@
+{
+    "text": " I live in a low-income housing environment that goes by the government name of Section 8.  Me and a group of my allies control certain areas of this section in order to run our illegitimate business.  We possess unregistered firearms, stolen vehicles, mind-altering inhibitors, and only use cash for financial purchases.  If anyone would like to settle unfinished altercations, I will be more than happy to release my address.  I would like to warn you, I am a very dangerous person.  And I regularly disobey the law.",
+    "task": "transcribe",
+    "language": "en",
+    "duration": 32.357,
+    "language_probability": 0.994140625,
+    "filename": "https://www.youtube.com/watch?v=2Hm8MB9Jx1k",
+    "segments": [
+        {
+            "start": 0.0,
+            "end": 4.6000000000000005,
+            "text": " I live in a low-income housing environment that goes by the government name of Section 8.",
+            "words": null
+        },
+        {
+            "start": 5.12,
+            "end": 10.56,
+            "text": " Me and a group of my allies control certain areas of this section in order to run our illegitimate business.",
+            "words": null
+        },
+        {
+            "start": 10.56,
+            "end": 20.04,
+            "text": " We possess unregistered firearms, stolen vehicles, mind-altering inhibitors, and only use cash for financial purchases.",
+            "words": null
+        },
+        {
+            "start": 20.78,
+            "end": 26.14,
+            "text": " If anyone would like to settle unfinished altercations, I will be more than happy to release my address.",
+            "words": null
+        },
+        {
+            "start": 26.740000000000002,
+            "end": 29.82,
+            "text": " I would like to warn you, I am a very dangerous person.",
+            "words": null
+        },
+        {
+            "start": 30.0,
+            "end": 32.18,
+            "text": " And I regularly disobey the law.",
+            "words": null
+        }
+    ]
+}

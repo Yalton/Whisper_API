@@ -1,0 +1,15 @@
+version: '3.8'
+
+services:
+  whisper_api:
+    build: .
+    volumes:
+      - .:/app
+    ports:
+      - 8000:8000
+    runtime: nvidia
+    environment:
+      - WHISPER_MODEL_SIZE=large-v3
+      - COMPUTE_DEVICE=cuda
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility

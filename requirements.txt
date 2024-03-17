@@ -1,0 +1,6 @@
+fastapi
+faster_whisper==0.10.1
+aiofiles
+python-multipart
+uvicorn
+yt_dlp
