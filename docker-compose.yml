@@ -9,6 +9,7 @@ services:
       - 8000:8000
     runtime: nvidia
     environment:
+      - AUTH_TOKEN=mPendhKBXHTvKyhNyV1RkN0OkUZwi4
       - WHISPER_MODEL_SIZE=large-v3
       - COMPUTE_DEVICE=cuda
       - NVIDIA_VISIBLE_DEVICES=all

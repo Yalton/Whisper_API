@@ -82,8 +82,11 @@ To get a local copy up and running follow these simple steps. This project suppo
    ```sh
    pip install -r requirements.txt
    ```
-
-#### Running With Docker
+4. Run it:
+   ```sh
+   python3 main.py
+   ```
+#### Running With Docker (Recommened)
 
 1. Clone the repo if you haven't already done so:
    ```sh
@@ -108,6 +111,7 @@ To get a local copy up and running follow these simple steps. This project suppo
 
 The application's behavior can be customized using environment variables. When running with Docker, these can be set in the `docker-compose.yml` file under the `environment` section. Here are the variables you can configure:
 
+- `AUTH_TOKEN`: Token used for Authenticating to the API, make it whatever you want 
 - `WHISPER_MODEL_SIZE`: The model size of the Whisper model to use (e.g., `tiny`, `base`, `small`, `medium`, `large`, `large-v2`).
 - `COMPUTE_DEVICE`: Set to `cuda` to use GPU acceleration, or `cpu` for CPU processing.
 - `NVIDIA_VISIBLE_DEVICES`: Specifies which GPUs to use (e.g., `all`, `0`, `1`).
@@ -148,7 +152,7 @@ Distributed under the MIT License. See `LICENSE.txt` for more information.
 <!-- CONTACT -->
 ## Contact
 
-Your Name - [your_email@example.com](mailto:your_email@example.com)
+Your Name - [drbailey117@gmail.com](mailto:drbailey117@gmail.com)
 
 Project Link: [https://github.com/Yalton/Whisper_API](https://github.com/Yalton/Whisper_API)
 
@@ -158,7 +162,6 @@ Project Link: [https://github.com/Yalton/Whisper_API](https://github.com/Yalton/
 - [OpenAI Whisper](https://github.com/openai/whisper)
 - [FastAPI](https://fastapi.tiangolo.com/)
 - [yt-dlp](https://github.com/yt-dlp/yt-dlp)
-- [Your additional resources or people]
 
 <!-- MARKDOWN LINKS & IMAGES -->
 [contributors-shield]: https://img.shields.io/github/contributors/Yalton/Whisper_API.svg?style=for-the-badge
@@ -172,5 +175,3 @@ Project Link: [https://github.com/Yalton/Whisper_API](https://github.com/Yalton/
 [license-shield]: https://img.shields.io/github/license/Yalton/Whisper_API.svg?style=for-the-badge
 [license-url]: https://github.com/Yalton/Whisper_API/blob/master/LICENSE.txt
 [product-screenshot]: images/screenshot.png
-
-Remember to replace placeholders (`Yalton`, `Whisper_API`, etc.) with your actual GitHub username, repository name, and other specific details about your project. This template provides a solid foundation for documenting your project and guiding users on how to install, use, and contribute to it.
