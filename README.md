@@ -157,10 +157,10 @@ Segment breaks the clip up into segments and provides timestamps for those segme
 
 Word breaks the clip up into words and provides timestamps for every detected word
 
-> Example of segment 
+#### Example of segment 
 
 ```sh
-curl http://192.168.50.210:8000/v1/audio/transcriptions/ \
+curl http://localhost:8000/v1/audio/transcriptions/ \
   -H 'Authorization: auth_token' \
   -H "Content-Type: multipart/form-data" \
   -F 'youtube_url=https://www.youtube.com/watch?v=2Hm8MB9Jx1k'
@@ -168,7 +168,19 @@ curl http://192.168.50.210:8000/v1/audio/transcriptions/ \
   -F "response_format=verbose_json"
 ```
 
-The response: [Response](docs/2Hm8MB9Jx1k.json)
+The response: [Response](docs/segment.json)
+
+#### Example of word 
+
+```sh
+curl http://localhost:8000/v1/audio/transcriptions/ \
+  -H 'Authorization: auth_token' \
+  -H "Content-Type: multipart/form-data" \
+  -F 'youtube_url=https://www.youtube.com/watch?v=2Hm8MB9Jx1k'
+  -F "timestamp_granularities=word" \
+  -F "response_format=verbose_json"
+```
+The response: [Response](docs/word.json)
 
 
 ### Configuration
