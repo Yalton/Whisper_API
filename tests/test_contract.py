@@ -17,9 +17,11 @@ from modules.config import settings
 from modules.models import TranscriptionSegment
 
 
-def make_client(tmp_path, monkeypatch):
-    async def fake_transcribe_audio(_, include_word_timestamps=False):
+def make_client(tmp_path, monkeypatch, seen_languages=None):
+    async def fake_transcribe_audio(_, include_word_timestamps=False, language=None):
         assert include_word_timestamps is True
+        if seen_languages is not None:
+            seen_languages.append(language)
         return (
             [
                 TranscriptionSegment(
@@ -72,6 +74,39 @@ def test_openai_compatible_verbose_response(tmp_path, monkeypatch):
     assert body["segments"][0]["words"][0]["word"] == " hello"
     assert body["words"][1]["probability"] == 0.8
     assert list(tmp_path.iterdir()) == []
+
+
+def test_language_form_field_pins_transcription_language(tmp_path, monkeypatch):
+    seen_languages = []
+    client = make_client(tmp_path, monkeypatch, seen_languages)
+    response = client.post(
+        "/v1/audio/transcriptions/",
+        headers={"Authorization": "Bearer test-secret"},
+        files={"file": ("speech.flac", b"fixture", "audio/flac")},
+        data={
+            "response_format": "verbose_json",
+            "timestamp_granularities[]": ["word", "segment"],
+            "language": "en",
+        },
+    )
+    assert response.status_code == 200
+    assert seen_languages == ["en"]
+
+
+def test_language_defaults_to_auto_detection(tmp_path, monkeypatch):
+    seen_languages = []
+    client = make_client(tmp_path, monkeypatch, seen_languages)
+    response = client.post(
+        "/v1/audio/transcriptions/",
+        headers={"Authorization": "Bearer test-secret"},
+        files={"file": ("speech.flac", b"fixture", "audio/flac")},
+        data={
+            "response_format": "verbose_json",
+            "timestamp_granularities[]": ["word", "segment"],
+        },
+    )
+    assert response.status_code == 200
+    assert seen_languages == [None]
 
 
 def test_auth_accepts_legacy_raw_token(tmp_path, monkeypatch):

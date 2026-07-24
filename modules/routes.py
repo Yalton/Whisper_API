@@ -61,6 +61,7 @@ async def transcribe_upload_file(
     ),
     response_format: Optional[str] = Form(default="raw_text"),
     model: Optional[str] = Form(default=None),
+    language: Optional[str] = Form(default=None),
     authorization: str = Depends(get_auth_token)  # Add this line
 ):
     start_time = datetime.now()
@@ -90,7 +91,11 @@ async def transcribe_upload_file(
             )
         include_word_timestamps = "word" in granularities
         
-        transcription_segments, language, language_probability, duration = await transcribe_audio(file_path, include_word_timestamps=include_word_timestamps)
+        transcription_segments, language, language_probability, duration = await transcribe_audio(
+            file_path,
+            include_word_timestamps=include_word_timestamps,
+            language=language,
+        )
         
         transcription_text = " ".join([segment.text for segment in transcription_segments])
         

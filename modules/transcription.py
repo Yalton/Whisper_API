@@ -46,11 +46,21 @@ async def detect_language(file_path: str):
     )
     return info.language, info.language_probability
 
-async def transcribe_audio(file_path: str, include_word_timestamps: bool = False):
-    settings.logger.info(f"Transcribing audio include_word_timestamps: {include_word_timestamps}")
+async def transcribe_audio(
+    file_path: str,
+    include_word_timestamps: bool = False,
+    language: str | None = None,
+):
+    settings.logger.info(
+        f"Transcribing audio include_word_timestamps: {include_word_timestamps} "
+        f"language: {language or 'auto'}"
+    )
     def run_transcription():
         segments, info = get_model().transcribe(
-            file_path, beam_size=5, word_timestamps=include_word_timestamps
+            file_path,
+            beam_size=5,
+            word_timestamps=include_word_timestamps,
+            language=language,
         )
         transcription_segments = [
             TranscriptionSegment(
