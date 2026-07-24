@@ -1,15 +1,21 @@
 import yt_dlp
+import hmac
 
-from fastapi import Header, HTTPException, Security
+from fastapi import Header, HTTPException
 from .config import settings
 
-def get_auth_token(authorization: str = Header(...)):
+def get_auth_token(authorization: str | None = Header(default=None)):
     """
     Dependency to extract and validate the authorization token from the request headers.
     """
-    if authorization != settings.AUTH_TOKEN:
+    if not settings.AUTH_TOKEN:
+        raise HTTPException(status_code=503, detail="API authentication is not configured")
+    supplied = authorization or ""
+    if supplied.lower().startswith("bearer "):
+        supplied = supplied[7:].strip()
+    if not hmac.compare_digest(supplied, settings.AUTH_TOKEN):
         raise HTTPException(status_code=401, detail="Unauthorized: Invalid or missing token")
-    return authorization
+    return supplied
 
 
 def download_youtube_audio(youtube_url: str, download_path: str) -> str:

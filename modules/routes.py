@@ -1,6 +1,8 @@
 from fastapi import APIRouter, File, UploadFile, HTTPException, Form, BackgroundTasks, Depends
 from typing import Optional, List
 import os
+import uuid
+from pathlib import Path
 from datetime import datetime
 from .transcription import detect_language, save_uploaded_file, transcribe_audio
 from .config import settings
@@ -51,15 +53,25 @@ async def transcribe_upload_file(
     background_tasks: BackgroundTasks,
     file: Optional[UploadFile] = File(None),
     youtube_url: Optional[str] = Form(None),
-    timestamp_granularities: Optional[str] = Form(default=""),
+    timestamp_granularities: List[str] = Form(
+        default=[], alias="timestamp_granularities[]"
+    ),
+    timestamp_granularities_legacy: Optional[str] = Form(
+        default=None, alias="timestamp_granularities"
+    ),
     response_format: Optional[str] = Form(default="raw_text"),
+    model: Optional[str] = Form(default=None),
     authorization: str = Depends(get_auth_token)  # Add this line
 ):
     start_time = datetime.now()
 
+    file_path = None
     if file:
         settings.logger.info(f"Received file for transcription: {file.filename}")
-        file_path = os.path.join(settings.UPLOAD_DIRECTORY, file.filename)
+        safe_suffix = Path(file.filename or "audio").suffix[:16]
+        file_path = os.path.join(
+            settings.UPLOAD_DIRECTORY, f"{uuid.uuid4().hex}{safe_suffix}"
+        )
         await save_uploaded_file(file, file_path)
     elif youtube_url:
         file_path = download_youtube_audio(youtube_url, settings.UPLOAD_DIRECTORY)
@@ -69,7 +81,14 @@ async def transcribe_upload_file(
     file_name = file.filename if file else youtube_url
 
     try:
-        include_word_timestamps = "word" in timestamp_granularities
+        granularities = set(timestamp_granularities)
+        if timestamp_granularities_legacy:
+            granularities.update(
+                part.strip()
+                for part in timestamp_granularities_legacy.split(",")
+                if part.strip()
+            )
+        include_word_timestamps = "word" in granularities
         
         transcription_segments, language, language_probability, duration = await transcribe_audio(file_path, include_word_timestamps=include_word_timestamps)
         
@@ -83,20 +102,20 @@ async def transcribe_upload_file(
             "duration": duration,
             "language_probability": language_probability,
             "filename": file_name,
+            "model": model or settings.MODEL_SIZE,
         }
 
-        # Handling for verbose_json response format with word timestamps
         if response_format == "verbose_json":
+            if "segment" in granularities or include_word_timestamps:
+                response_data["segments"] = [
+                    segment.model_dump() for segment in transcription_segments
+                ]
             if include_word_timestamps:
-                # Flatten words from all segments into a single list
-                all_words = []
-                for segment in transcription_segments:
-                    if segment.words:  # Ensure words are present
-                        all_words.extend(segment.words)
-                response_data["words"] = all_words
-            elif "segment" in timestamp_granularities:
-                # Include segment information without modifying it
-                response_data["segments"] = [segment.dict() for segment in transcription_segments]
+                response_data["words"] = [
+                    word
+                    for segment in transcription_segments
+                    for word in (segment.words or [])
+                ]
 
         settings.logger.info(f"Transcription performed on audio sample of {duration} seconds took {(datetime.now() - start_time).total_seconds()} seconds.")
         return response_data
@@ -107,3 +126,9 @@ async def transcribe_upload_file(
     except Exception as e:
         settings.logger.error(f"Unhandled exception: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Internal server error")
+    finally:
+        if file_path and os.path.isfile(file_path):
+            try:
+                os.remove(file_path)
+            except OSError:
+                settings.logger.warning("Could not remove temporary upload %s", file_path)
