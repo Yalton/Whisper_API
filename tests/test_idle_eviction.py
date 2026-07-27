@@ -158,3 +158,23 @@ def test_transcribe_audio_releases_the_model_for_eviction(tmp_path):
     asyncio.run(transcription.transcribe_audio(str(tmp_path / "a.wav")))
     assert transcription.model_is_loaded() is True
     assert transcription.maybe_evict_idle_model(300, now=_later(301)) is True
+
+
+def test_detect_language_uses_supported_transcribe_contract(tmp_path):
+    import asyncio
+
+    class Info:
+        language, language_probability = "en", 0.99
+
+    calls = []
+
+    def fake_transcribe(self, file_path, **kwargs):
+        calls.append((file_path, kwargs))
+        return iter(()), Info()
+
+    FakeWhisperModel.transcribe = fake_transcribe
+    audio_path = str(tmp_path / "a.wav")
+
+    assert asyncio.run(transcription.detect_language(audio_path)) == ("en", 0.99)
+    assert calls == [(audio_path, {})]
+    assert transcription.maybe_evict_idle_model(300, now=_later(301)) is True

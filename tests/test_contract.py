@@ -131,3 +131,30 @@ def test_auth_rejects_bad_token(tmp_path, monkeypatch):
         files={"file": ("speech.flac", b"fixture", "audio/flac")},
     )
     assert response.status_code == 401
+
+
+def test_language_detection_returns_metadata_and_removes_upload(tmp_path, monkeypatch):
+    seen_paths = []
+
+    async def fake_detect_language(path):
+        seen_paths.append(path)
+        assert os.path.exists(path)
+        return "en", 0.98
+
+    monkeypatch.setattr(routes, "detect_language", fake_detect_language)
+    monkeypatch.setattr(settings, "UPLOAD_DIRECTORY", str(tmp_path))
+    app = FastAPI()
+    app.include_router(routes.router)
+    client = TestClient(app)
+
+    response = client.post(
+        "/v1/audio/language_detection/",
+        headers={"Authorization": "Bearer test-secret"},
+        files={"file": ("../../speech.flac", b"fixture", "audio/flac")},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"language": "en", "probability": 0.98}
+    assert len(seen_paths) == 1
+    assert os.path.dirname(seen_paths[0]) == str(tmp_path)
+    assert list(tmp_path.iterdir()) == []

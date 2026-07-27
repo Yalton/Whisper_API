@@ -160,7 +160,9 @@ async def detect_language(file_path: str):
 
     def run_detection():
         with model_session() as model:
-            _, info = model.transcribe(file_path, just_detection=True)
+            # faster-whisper performs language detection before returning the
+            # lazy segment iterator. There is no `just_detection` parameter.
+            _, info = model.transcribe(file_path)
             return info
 
     info = await asyncio.to_thread(run_detection)

@@ -30,9 +30,13 @@ async def language_detection(
     youtube_url: Optional[str] = Form(None), 
     authorization: str = Depends(get_auth_token)  # Add this line
 ):
+    file_path = None
     if file:
         settings.logger.info(f"Received file for language detection: {file.filename}")
-        file_path = os.path.join(settings.UPLOAD_DIRECTORY, file.filename)
+        safe_suffix = Path(file.filename or "audio").suffix[:16]
+        file_path = os.path.join(
+            settings.UPLOAD_DIRECTORY, f"{uuid.uuid4().hex}{safe_suffix}"
+        )
         await save_uploaded_file(file, file_path)
     elif youtube_url:
         settings.logger.info(f"Downloading YouTube video for language detection: {youtube_url}")
@@ -40,12 +44,18 @@ async def language_detection(
     else:
         raise HTTPException(status_code=400, detail="Must provide either a file or a YouTube URL")
 
-    language, probability = await detect_language(file_path)
-    
-    return {
-        "language": language,
-        "probability": probability
-    }
+    try:
+        language, probability = await detect_language(file_path)
+        return {
+            "language": language,
+            "probability": probability
+        }
+    finally:
+        if file_path and os.path.isfile(file_path):
+            try:
+                os.remove(file_path)
+            except OSError:
+                settings.logger.warning("Could not remove temporary upload %s", file_path)
 
 
 @router.post("/v1/audio/transcriptions/", summary="Transcription endpoint", description="Endpoint to transcribe audio in provided clip or youtube video")
