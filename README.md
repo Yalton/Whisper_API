@@ -111,7 +111,7 @@ Getting a basic transcription is easy, simply invoke the following request
 
 ```sh
 curl http://localhost:8000/v1/audio/transcriptions/ \
-  -H 'Authorization: auth_token' \
+  -H 'Authorization: Bearer auth_token' \
   -H "Content-Type: multipart/form-data" \
   -F 'file=@PickleRick-MasterChief.mp3;type=video/webm'
 ```
@@ -189,7 +189,8 @@ The response: [Response](docs/word.json)
 
 The application's behavior can be customized using environment variables. When running with Docker, these can be set in the `docker-compose.yml` file under the `environment` section. Here are the variables you can configure:
 
-- `AUTH_TOKEN`: Token used for Authenticating to the API, make it whatever you want 
+- `AUTH_TOKEN`: Token used for authenticating to the API. Supply it as
+  `Authorization: Bearer <token>`. The legacy raw-token header remains supported.
 - `WHISPER_MODEL_SIZE`: The model size of the Whisper model to use (e.g., `tiny`, `base`, `small`, `medium`, `large`, `large-v2`).
 - `COMPUTE_DEVICE`: Set to `cuda` to use GPU acceleration, or `cpu` for CPU processing.
 - `NVIDIA_VISIBLE_DEVICES`: Specifies which GPUs to use (e.g., `all`, `0`, `1`).
@@ -220,7 +221,9 @@ To change the environment variables:
 
 Now, your Whisper API is set up and running, either locally or within a Docker container, based on your setup choice. Follow the next sections for how to use the API and contribute to its development.
 
-Navigate to http://localhost:8000/docs for the Swagger API Docs and testing the API 
+The Docker Compose host port defaults to `8001` to avoid colliding with other local APIs;
+override it with `WHISPER_API_PORT`. Navigate to http://localhost:8001/docs for Swagger
+API documentation when using the default Compose configuration.
 
 <!-- LICENSE -->
 ## License
