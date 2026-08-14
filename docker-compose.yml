@@ -6,6 +6,10 @@ services:
     ports:
       - "${WHISPER_API_PORT:-8001}:8000"
     runtime: nvidia
+    # Driver 535 (CUDA 12.2) + CUDA 12.8 image: mask the bundled
+    # forward-compat libs or CUDA silently falls back to CPU.
+    tmpfs:
+      - /usr/local/cuda/compat
     environment:
       - AUTH_TOKEN=${AUTH_TOKEN:?Set AUTH_TOKEN in the environment}
       - WHISPER_MODEL_SIZE=${WHISPER_MODEL_SIZE:-large-v3}

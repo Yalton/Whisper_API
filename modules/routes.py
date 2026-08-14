@@ -59,6 +59,9 @@ async def language_detection(
 
 
 @router.post("/v1/audio/transcriptions/", summary="Transcription endpoint", description="Endpoint to transcribe audio in provided clip or youtube video")
+# OpenAI-compatible clients call the path without a trailing slash. Serve it
+# directly instead of 307-redirecting, which would re-upload the audio body.
+@router.post("/v1/audio/transcriptions", include_in_schema=False)
 async def transcribe_upload_file(
     background_tasks: BackgroundTasks,
     file: Optional[UploadFile] = File(None),
