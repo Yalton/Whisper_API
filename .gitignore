@@ -2,3 +2,5 @@ modules/__pycache__
 .env
 .pytest_cache/
 __pycache__/
+docker-compose.yml.orig
+*.bak-*
