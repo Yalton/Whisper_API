@@ -43,10 +43,15 @@ class FakeWhisperModel:
 @pytest.fixture(autouse=True)
 def fake_model(monkeypatch):
     _loads.clear()
-    # Patch where the name is bound, not where it came from: transcription.py
-    # does `from faster_whisper import WhisperModel`, so this is the only seam
-    # that holds regardless of which test module imported first.
-    monkeypatch.setattr(transcription, "WhisperModel", FakeWhisperModel)
+    monkeypatch.setattr(
+        transcription,
+        "_load_model",
+        lambda: FakeWhisperModel(
+            transcription.settings.MODEL_SIZE,
+            device=transcription.settings.COMPUTE_DEVICE,
+            compute_type="int8",
+        ),
+    )
     transcription.reset_model_state()
     yield
     transcription.reset_model_state()
@@ -155,7 +160,8 @@ def test_transcribe_audio_releases_the_model_for_eviction(tmp_path):
         return iter([Segment()]), Info()
 
     FakeWhisperModel.transcribe = fake_transcribe
-    asyncio.run(transcription.transcribe_audio(str(tmp_path / "a.wav")))
+    result = asyncio.run(transcription.transcribe_audio(str(tmp_path / "a.wav")))
+    assert result.language == "en"
     assert transcription.model_is_loaded() is True
     assert transcription.maybe_evict_idle_model(300, now=_later(301)) is True
 

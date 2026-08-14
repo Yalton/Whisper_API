@@ -1,26 +1,26 @@
+"""Lazy, idle-evictable ASR backends.
+
+The HTTP layer consumes one normalized result shape, while model-specific
+details live here. Whisper remains the default; Qwen3-ASR can be selected with
+ASR_BACKEND=qwen3.
+"""
+
 from .config import settings
-from faster_whisper import WhisperModel
+from .models import TranscriptionResult, TranscriptionSegment
+
 import aiofiles
 import asyncio
 import contextlib
 import gc
+import json
 import os
+import subprocess
 import threading
 import time
-from .models import TranscriptionSegment
 from datetime import datetime
+from typing import Any
 
 
-# The model is loaded on first use and released again once it has been idle for
-# WHISPER_IDLE_TIMEOUT seconds. Lazy loading alone was never the problem: it was
-# already lazy, but nothing ever let go, so one request pinned the weights for
-# the life of the process -- 3.5 GB for large-v3, on a box used for other work.
-#
-# ctranslate2 3.24 exposes no unload_model on Whisper, so eviction means dropping
-# every reference and letting the destructor free device memory. Measured on the
-# box, the `small` model takes 1027 MiB and returns 626 MiB, the remaining
-# 401 MiB being the process CUDA context, which only a process exit reclaims.
-# Repeated load/unload cycles plateau exactly, so this does not leak.
 _model = None
 _active = 0
 _last_used = 0.0
@@ -28,7 +28,6 @@ _lock = threading.Lock()
 
 
 def now() -> float:
-    """Monotonic clock. Wall time would let a clock change trigger eviction."""
     return time.monotonic()
 
 
@@ -43,40 +42,98 @@ def mark_used(at: float | None = None) -> None:
         _last_used = now() if at is None else at
 
 
+def _load_whisper_model():
+    from faster_whisper import WhisperModel
+
+    return WhisperModel(
+        settings.MODEL_SIZE,
+        device=settings.COMPUTE_DEVICE,
+        compute_type="float16" if settings.COMPUTE_DEVICE == "cuda" else "int8",
+    )
+
+
+def _qwen_dtype(torch):
+    configured = settings.QWEN_DTYPE
+    if configured != "auto":
+        try:
+            return getattr(torch, configured)
+        except AttributeError as exc:
+            raise ValueError(f"Unsupported QWEN_DTYPE={configured!r}") from exc
+    if settings.COMPUTE_DEVICE == "cuda":
+        return torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
+    return torch.float32
+
+
+def _load_qwen_model():
+    import torch
+    from qwen_asr import Qwen3ASRModel
+
+    device = "cuda:0" if settings.COMPUTE_DEVICE == "cuda" else "cpu"
+    common = {
+        "dtype": _qwen_dtype(torch),
+        "device_map": device,
+    }
+    if settings.QWEN_ATTN_IMPLEMENTATION:
+        common["attn_implementation"] = settings.QWEN_ATTN_IMPLEMENTATION
+
+    kwargs = {
+        **common,
+        "max_inference_batch_size": settings.QWEN_MAX_BATCH_SIZE,
+        "max_new_tokens": settings.QWEN_MAX_NEW_TOKENS,
+    }
+    if settings.QWEN_ALIGNER_MODEL:
+        kwargs["forced_aligner"] = settings.QWEN_ALIGNER_MODEL
+        kwargs["forced_aligner_kwargs"] = dict(common)
+    return Qwen3ASRModel.from_pretrained(settings.QWEN_MODEL, **kwargs)
+
+
+def _load_model():
+    if settings.ASR_BACKEND == "whisper":
+        return _load_whisper_model()
+    if settings.ASR_BACKEND == "qwen3":
+        return _load_qwen_model()
+    raise ValueError(
+        f"Unsupported ASR_BACKEND={settings.ASR_BACKEND!r}; use 'whisper' or 'qwen3'"
+    )
+
+
 def reset_model_state() -> None:
-    """Drop the model and every counter. Test hook."""
+    """Drop the model and counters. Also used as a test hook."""
     global _model, _active, _last_used
     with _lock:
         _model = None
         _active = 0
         _last_used = 0.0
+    _release_runtime_memory()
+
+
+def _release_runtime_memory() -> None:
     gc.collect()
+    if settings.ASR_BACKEND == "qwen3":
+        try:
+            import torch
+
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        except ImportError:
+            pass
 
 
 @contextlib.contextmanager
 def model_session():
-    """Borrow the model, loading it if necessary, and hold off eviction.
-
-    The load happens under the lock so that two requests arriving together
-    cannot each build a model and double the VRAM they were meant to save. The
-    second waits out the ~32s load and then shares the result.
-    """
     global _model, _active, _last_used
     with _lock:
         if _model is None:
             start = datetime.now()
             settings.logger.info(
-                "Initializing Whisper model, model_size=%s device=%s",
-                settings.MODEL_SIZE,
+                "Initializing ASR model backend=%s model=%s device=%s",
+                settings.ASR_BACKEND,
+                configured_model_name(),
                 settings.COMPUTE_DEVICE,
             )
-            _model = WhisperModel(
-                settings.MODEL_SIZE,
-                device=settings.COMPUTE_DEVICE,
-                compute_type="float16" if settings.COMPUTE_DEVICE == "cuda" else "int8",
-            )
+            _model = _load_model()
             settings.logger.info(
-                "Model initialized in %.2f seconds",
+                "ASR model initialized in %.2f seconds",
                 (datetime.now() - start).total_seconds(),
             )
         _active += 1
@@ -86,17 +143,10 @@ def model_session():
     finally:
         with _lock:
             _active -= 1
-            # Idle is measured from release, not acquisition: a transcription
-            # that ran for an hour has only just stopped being useful.
             _last_used = now()
 
 
 def maybe_evict_idle_model(idle_timeout: float, now: float | None = None) -> bool:
-    """Release the model if nothing has used it for idle_timeout seconds.
-
-    Returns whether an eviction happened. A session in flight always wins:
-    freeing the model under a running transcription would crash the request.
-    """
     global _model
     with _lock:
         if _model is None or _active > 0:
@@ -106,12 +156,9 @@ def maybe_evict_idle_model(idle_timeout: float, now: float | None = None) -> boo
         if idle_for < idle_timeout:
             return False
         _model = None
-    # Outside the lock: the collection is the slow part, and a request arriving
-    # now should be free to start loading a fresh model rather than wait on it.
-    gc.collect()
+    _release_runtime_memory()
     settings.logger.info(
-        "Released idle Whisper model after %.0fs idle; VRAM returned to the pool",
-        idle_for,
+        "Released idle %s model after %.0fs idle", settings.ASR_BACKEND, idle_for
     )
     return True
 
@@ -119,25 +166,14 @@ def maybe_evict_idle_model(idle_timeout: float, now: float | None = None) -> boo
 async def idle_eviction_loop(
     idle_timeout: float | None = None, interval: float | None = None
 ) -> None:
-    """Poll for an idle model and release it. Started from the app lifespan."""
     timeout = settings.IDLE_TIMEOUT_SECONDS if idle_timeout is None else idle_timeout
     if timeout <= 0:
-        settings.logger.info(
-            "Whisper idle eviction disabled; the model will stay resident once loaded"
-        )
+        settings.logger.info("ASR idle eviction disabled")
         return
     poll = max(5.0, min(timeout / 4.0, 60.0)) if interval is None else interval
-    settings.logger.info(
-        "Whisper idle eviction active: releasing the model after %.0fs idle "
-        "(checked every %.0fs)",
-        timeout,
-        poll,
-    )
     while True:
         await asyncio.sleep(poll)
         try:
-            # gc.collect() can stall briefly; keep it off the event loop so it
-            # cannot delay an incoming request.
             await asyncio.to_thread(maybe_evict_idle_model, timeout)
         except asyncio.CancelledError:
             raise
@@ -149,68 +185,156 @@ os.makedirs(settings.UPLOAD_DIRECTORY, exist_ok=True)
 
 
 async def save_uploaded_file(upload_file, path: str):
-    async with aiofiles.open(path, 'wb') as out_file:
+    async with aiofiles.open(path, "wb") as out_file:
         while chunk := await upload_file.read(1024 * 1024):
             await out_file.write(chunk)
-    settings.logger.info(f"Saved file to {path}")
+    settings.logger.info("Saved file to %s", path)
+
+
+def configured_model_name() -> str:
+    return settings.QWEN_MODEL if settings.ASR_BACKEND == "qwen3" else settings.MODEL_SIZE
+
+
+def _audio_duration(file_path: str) -> float:
+    process = subprocess.run(
+        [
+            "ffprobe",
+            "-v",
+            "error",
+            "-show_entries",
+            "format=duration",
+            "-of",
+            "json",
+            file_path,
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return float(json.loads(process.stdout)["format"]["duration"])
+
+
+_QWEN_LANGUAGE_NAMES = {
+    "zh": "Chinese", "en": "English", "yue": "Cantonese", "ar": "Arabic",
+    "de": "German", "fr": "French", "es": "Spanish", "pt": "Portuguese",
+    "id": "Indonesian", "it": "Italian", "ko": "Korean", "ru": "Russian",
+    "th": "Thai", "vi": "Vietnamese", "ja": "Japanese", "tr": "Turkish",
+    "hi": "Hindi", "ms": "Malay", "nl": "Dutch", "sv": "Swedish",
+    "da": "Danish", "fi": "Finnish", "pl": "Polish", "cs": "Czech",
+    "fil": "Filipino", "fa": "Persian", "el": "Greek", "hu": "Hungarian",
+    "mk": "Macedonian", "ro": "Romanian",
+}
+_QWEN_LANGUAGE_CODES = {name.lower(): code for code, name in _QWEN_LANGUAGE_NAMES.items()}
+
+
+def _qwen_language(language: str | None) -> str | None:
+    if not language:
+        return None
+    return _QWEN_LANGUAGE_NAMES.get(language.lower(), language)
+
+
+def _language_code(language: str) -> str:
+    # Mixed-language results such as "Chinese,English" have no single ISO code.
+    return _QWEN_LANGUAGE_CODES.get(language.lower(), language)
+
+
+def _transcribe_whisper(model, file_path, include_word_timestamps, language):
+    segments, info = model.transcribe(
+        file_path,
+        beam_size=5,
+        word_timestamps=include_word_timestamps,
+        language=language,
+    )
+    normalized = [
+        TranscriptionSegment(
+            start=segment.start,
+            end=segment.end,
+            text=segment.text,
+            words=[
+                {
+                    "start": word.start,
+                    "end": word.end,
+                    "word": word.word,
+                    "probability": word.probability,
+                }
+                for word in segment.words
+            ]
+            if include_word_timestamps
+            else None,
+        )
+        for segment in segments
+    ]
+    return TranscriptionResult(
+        segments=normalized,
+        language=info.language,
+        language_probability=info.language_probability,
+        duration=info.duration,
+    )
+
+
+def _transcribe_qwen(model, file_path, include_word_timestamps, language):
+    if include_word_timestamps and not settings.QWEN_ALIGNER_MODEL:
+        raise ValueError(
+            "Word timestamps require QWEN_ALIGNER_MODEL to be configured"
+        )
+    result = model.transcribe(
+        audio=file_path,
+        language=_qwen_language(language),
+        return_time_stamps=include_word_timestamps,
+    )[0]
+    duration = _audio_duration(file_path)
+    words = None
+    start, end = 0.0, duration
+    if include_word_timestamps:
+        words = [
+            {
+                "start": item.start_time,
+                "end": item.end_time,
+                "word": item.text,
+                "probability": None,
+            }
+            for item in result.time_stamps
+        ]
+        if words:
+            start, end = words[0]["start"], words[-1]["end"]
+    return TranscriptionResult(
+        segments=[
+            TranscriptionSegment(
+                start=start, end=end, text=result.text, words=words
+            )
+        ],
+        language=_language_code(result.language),
+        language_probability=None,
+        duration=duration,
+    )
 
 
 async def detect_language(file_path: str):
-    settings.logger.info("Detecting language...")
+    if settings.ASR_BACKEND == "whisper":
+        def run_whisper_detection():
+            with model_session() as model:
+                _, info = model.transcribe(file_path)
+                return info.language, info.language_probability
 
-    def run_detection():
-        with model_session() as model:
-            # faster-whisper performs language detection before returning the
-            # lazy segment iterator. There is no `just_detection` parameter.
-            _, info = model.transcribe(file_path)
-            return info
+        return await asyncio.to_thread(run_whisper_detection)
 
-    info = await asyncio.to_thread(run_detection)
-    return info.language, info.language_probability
+    result = await transcribe_audio(file_path)
+    return result.language, result.language_probability
 
 
 async def transcribe_audio(
     file_path: str,
     include_word_timestamps: bool = False,
     language: str | None = None,
-):
-    settings.logger.info(
-        f"Transcribing audio include_word_timestamps: {include_word_timestamps} "
-        f"language: {language or 'auto'}"
-    )
-
+) -> TranscriptionResult:
     def run_transcription():
-        # The whole session stays open until the segment generator is drained:
-        # faster_whisper yields lazily, so releasing the model earlier would
-        # pull it out from under the iteration.
         with model_session() as model:
-            segments, info = model.transcribe(
-                file_path,
-                beam_size=5,
-                word_timestamps=include_word_timestamps,
-                language=language,
-            )
-            transcription_segments = [
-                TranscriptionSegment(
-                    start=segment.start,
-                    end=segment.end,
-                    text=segment.text,
-                    words=[
-                        {
-                            "start": word.start,
-                            "end": word.end,
-                            "word": word.word,
-                            "probability": word.probability,
-                        }
-                        for word in segment.words
-                    ]
-                    if include_word_timestamps
-                    else None,
+            if settings.ASR_BACKEND == "qwen3":
+                return _transcribe_qwen(
+                    model, file_path, include_word_timestamps, language
                 )
-                for segment in segments
-            ]
-            return transcription_segments, info
+            return _transcribe_whisper(
+                model, file_path, include_word_timestamps, language
+            )
 
-    transcription_segments, info = await asyncio.to_thread(run_transcription)
-    settings.logger.info(f"Transcription completed. Language: {info.language}, Probability: {info.language_probability}, Duration: {info.duration}")
-    return transcription_segments, info.language, info.language_probability, info.duration
+    return await asyncio.to_thread(run_transcription)

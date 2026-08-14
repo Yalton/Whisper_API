@@ -10,7 +10,7 @@
     <!-- You can add a logo here -->
   </a>
 
-<h3 align="center">Whisper API</h3>
+<h3 align="center">Local ASR API</h3>
 
 </div>
 
@@ -37,15 +37,22 @@
 <!-- ABOUT THE PROJECT -->
 ## About The Project
 
-This project aims to provide an easy to use self hostable solution for transcribing audio files either from local files or youtube videos. It uses [faster-whisper](https://github.com/SYSTRAN/faster-whisper.git) which is version of OpenAIs whisper model that is up to 4x as fast as the original model. 
+This project provides an easy-to-use, self-hosted speech-to-text (ASR) API for
+audio files and YouTube videos. It supports two interchangeable local backends:
 
-This project aimed to place this model behind an easy to use API such that it can be consumed by other projects that require quick transcription. 
+- [faster-whisper](https://github.com/SYSTRAN/faster-whisper), the mature and
+  resource-efficient default.
+- [Qwen3-ASR](https://github.com/QwenLM/Qwen3-ASR), a newer multilingual model
+  with strong recognition of accents, dialects, singing, and difficult audio.
+
+This is an ASR/speech-to-text service. It does not perform TTS/text-to-speech.
 
 ### Features:
 
 - Audio file transcription
 - YouTube video audio transcription
 - Language detection
+- Selectable Whisper or Qwen3-ASR inference
 - Authorization for secure API access
 
 ### Built With
@@ -54,6 +61,7 @@ This section should list any major frameworks/libraries used to bootstrap your p
 - [FastAPI](https://fastapi.tiangolo.com/)
 - [yt-dlp](https://github.com/yt-dlp/yt-dlp)
 - [faster-whisper](https://github.com/SYSTRAN/faster-whisper.git)
+- [Qwen3-ASR](https://github.com/QwenLM/Qwen3-ASR)
 
 
 ## Getting Started
@@ -62,7 +70,7 @@ To get a local copy up and running follow these simple steps. This project suppo
 
 ### Prerequisites
 
-- Python 3.8 or higher (for running without Docker)
+- Python 3.9 or higher (Python 3.12 is recommended)
 - Docker and Docker Compose (for running with Docker)
 - NVIDIA Docker Runtime (if using CUDA for GPU acceleration)
 
@@ -125,7 +133,8 @@ You will then receive a json respone resembling the following
     "language": "en",
     "duration": 23.289625,
     "language_probability": 0.9990234375,
-    "filename": "PickleRick-MasterChief.mp3"
+    "filename": "PickleRick-MasterChief.mp3",
+    "model": "large-v3"
 }
 ```
 
@@ -191,8 +200,21 @@ The application's behavior can be customized using environment variables. When r
 
 - `AUTH_TOKEN`: Token used for authenticating to the API. Supply it as
   `Authorization: Bearer <token>`. The legacy raw-token header remains supported.
+- `ASR_BACKEND`: `whisper` (default) or `qwen3`.
 - `WHISPER_MODEL_SIZE`: The model size of the Whisper model to use (e.g., `tiny`, `base`, `small`, `medium`, `large`, `large-v2`).
 - `COMPUTE_DEVICE`: Set to `cuda` to use GPU acceleration, or `cpu` for CPU processing.
+- `QWEN_ASR_MODEL`: Qwen checkpoint. Defaults to `Qwen/Qwen3-ASR-1.7B`.
+- `QWEN_ALIGNER_MODEL`: Forced-aligner checkpoint used for word timestamps.
+  Defaults to `Qwen/Qwen3-ForcedAligner-0.6B`. Set it to an empty value to
+  reduce memory use when timestamps are not needed.
+- `QWEN_DTYPE`: `auto`, `bfloat16`, `float16`, or `float32`. `auto` selects
+  BF16 on supported CUDA GPUs, FP16 on older CUDA GPUs, and FP32 on CPU.
+- `QWEN_ATTN_IMPLEMENTATION`: Defaults to `sdpa`, which requires no compiled
+  FlashAttention extension.
+- `QWEN_MAX_NEW_TOKENS`: Generation ceiling for long audio. Defaults to `4096`.
+- `QWEN_MAX_BATCH_SIZE`: Transformers-backend batch limit. Defaults to `8`.
+- `ASR_IDLE_TIMEOUT`: Seconds before inactive model weights are released.
+  Defaults to `300`; set to `0` to keep the selected model resident.
 - `NVIDIA_VISIBLE_DEVICES`: Specifies which GPUs to use (e.g., `all`, `0`, `1`).
 - `NVIDIA_DRIVER_CAPABILITIES`: Set to `compute,utility` for CUDA computations.
 
@@ -200,11 +222,32 @@ Here's an example of how the `environment` section might look in your `docker-co
 
 ```yaml
 environment:
+  - ASR_BACKEND=qwen3
+  - QWEN_ASR_MODEL=Qwen/Qwen3-ASR-1.7B
+  - QWEN_ALIGNER_MODEL=Qwen/Qwen3-ForcedAligner-0.6B
+  - ASR_IDLE_TIMEOUT=300
+  - COMPUTE_DEVICE=cuda
+  - NVIDIA_VISIBLE_DEVICES=all
+  - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+```
+
+To retain Whisper:
+
+```yaml
+environment:
+  - ASR_BACKEND=whisper
   - WHISPER_MODEL_SIZE=large-v3
   - COMPUTE_DEVICE=cuda
   - NVIDIA_VISIBLE_DEVICES=all
   - NVIDIA_DRIVER_CAPABILITIES=compute,utility
 ```
+
+Qwen does not expose confidence values equivalent to Whisper's language and
+per-word probabilities. Under the Qwen backend, `language_probability` and
+word-level `probability` are therefore returned as `null`. Word timestamps
+require the configured Qwen forced aligner. Qwen currently returns one
+top-level segment for the complete transcript; its aligned words are included
+when word timestamps are requested.
 
 #### Editing Environment Variables
 

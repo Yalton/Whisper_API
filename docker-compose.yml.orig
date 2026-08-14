@@ -1,0 +1,30 @@
+services:
+  whisper_api:
+    build: .
+    restart: unless-stopped
+    volumes:
+      - .:/app
+    ports:
+      - "${WHISPER_API_PORT:-8001}:8000"
+    runtime: nvidia
+    environment:
+      - AUTH_TOKEN=${AUTH_TOKEN:?Set AUTH_TOKEN in the environment}
+      - WHISPER_MODEL_SIZE=${WHISPER_MODEL_SIZE:-large-v3}
+      - ASR_BACKEND=${ASR_BACKEND:-whisper}
+      - COMPUTE_DEVICE=${COMPUTE_DEVICE:-cuda}
+      - QWEN_ASR_MODEL=${QWEN_ASR_MODEL:-Qwen/Qwen3-ASR-1.7B}
+      - QWEN_ALIGNER_MODEL=${QWEN_ALIGNER_MODEL:-Qwen/Qwen3-ForcedAligner-0.6B}
+      - QWEN_DTYPE=${QWEN_DTYPE:-auto}
+      - QWEN_ATTN_IMPLEMENTATION=${QWEN_ATTN_IMPLEMENTATION:-sdpa}
+      - QWEN_MAX_NEW_TOKENS=${QWEN_MAX_NEW_TOKENS:-4096}
+      - QWEN_MAX_BATCH_SIZE=${QWEN_MAX_BATCH_SIZE:-8}
+      # Seconds idle before either backend releases its weights.
+      - ASR_IDLE_TIMEOUT=${ASR_IDLE_TIMEOUT:-300}
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/docs')"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 60s

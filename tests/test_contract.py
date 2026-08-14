@@ -15,6 +15,7 @@ from fastapi.testclient import TestClient
 from modules import routes
 from modules.config import settings
 from modules.models import TranscriptionSegment
+from modules.models import TranscriptionResult
 
 
 def make_client(tmp_path, monkeypatch, seen_languages=None):
@@ -22,8 +23,8 @@ def make_client(tmp_path, monkeypatch, seen_languages=None):
         assert include_word_timestamps is True
         if seen_languages is not None:
             seen_languages.append(language)
-        return (
-            [
+        return TranscriptionResult(
+            segments=[
                 TranscriptionSegment(
                     start=0,
                     end=1,
@@ -44,9 +45,9 @@ def make_client(tmp_path, monkeypatch, seen_languages=None):
                     ],
                 )
             ],
-            "en",
-            0.99,
-            1.0,
+            language="en",
+            language_probability=0.99,
+            duration=1.0,
         )
 
     monkeypatch.setattr(routes, "transcribe_audio", fake_transcribe_audio)
@@ -70,6 +71,17 @@ def test_openai_compatible_verbose_response(tmp_path, monkeypatch):
     )
     assert response.status_code == 200
     body = response.json()
+    assert set(body) == {
+        "text",
+        "task",
+        "language",
+        "duration",
+        "language_probability",
+        "filename",
+        "model",
+        "segments",
+        "words",
+    }
     assert body["language"] == "en"
     assert body["segments"][0]["words"][0]["word"] == " hello"
     assert body["words"][1]["probability"] == 0.8

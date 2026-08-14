@@ -4,7 +4,12 @@ import os
 import uuid
 from pathlib import Path
 from datetime import datetime
-from .transcription import detect_language, save_uploaded_file, transcribe_audio
+from .transcription import (
+    configured_model_name,
+    detect_language,
+    save_uploaded_file,
+    transcribe_audio,
+)
 from .config import settings
 from .utils import download_youtube_audio, get_auth_token
 
@@ -59,6 +64,9 @@ async def language_detection(
 
 
 @router.post("/v1/audio/transcriptions/", summary="Transcription endpoint", description="Endpoint to transcribe audio in provided clip or youtube video")
+# OpenAI-compatible clients call the path without a trailing slash. Serve it
+# directly instead of 307-redirecting, which would re-upload the audio body.
+@router.post("/v1/audio/transcriptions", include_in_schema=False)
 async def transcribe_upload_file(
     background_tasks: BackgroundTasks,
     file: Optional[UploadFile] = File(None),
@@ -101,38 +109,38 @@ async def transcribe_upload_file(
             )
         include_word_timestamps = "word" in granularities
         
-        transcription_segments, language, language_probability, duration = await transcribe_audio(
+        result = await transcribe_audio(
             file_path,
             include_word_timestamps=include_word_timestamps,
             language=language,
         )
         
-        transcription_text = " ".join([segment.text for segment in transcription_segments])
+        transcription_text = " ".join([segment.text for segment in result.segments])
         
 
         response_data = {
             "text": transcription_text,
             "task": "transcribe",
-            "language": language,
-            "duration": duration,
-            "language_probability": language_probability,
+            "language": result.language,
+            "duration": result.duration,
+            "language_probability": result.language_probability,
             "filename": file_name,
-            "model": model or settings.MODEL_SIZE,
+            "model": model or configured_model_name(),
         }
 
         if response_format == "verbose_json":
             if "segment" in granularities or include_word_timestamps:
                 response_data["segments"] = [
-                    segment.model_dump() for segment in transcription_segments
+                    segment.model_dump() for segment in result.segments
                 ]
             if include_word_timestamps:
                 response_data["words"] = [
                     word
-                    for segment in transcription_segments
+                    for segment in result.segments
                     for word in (segment.words or [])
                 ]
 
-        settings.logger.info(f"Transcription performed on audio sample of {duration} seconds took {(datetime.now() - start_time).total_seconds()} seconds.")
+        settings.logger.info(f"Transcription performed on audio sample of {result.duration} seconds took {(datetime.now() - start_time).total_seconds()} seconds.")
         return response_data
 
     except HTTPException as e:
