@@ -4,3 +4,6 @@ modules/__pycache__
 __pycache__/
 docker-compose.yml.orig
 *.bak-*
+
+# Host-specific compose overrides
+docker-compose.override.yml
