@@ -2,6 +2,8 @@ import os
 import sys
 import types
 
+import pytest
+
 os.environ["AUTH_TOKEN"] = "test-secret"
 
 # The HTTP contract tests do not load a real model.
@@ -169,4 +171,21 @@ def test_language_detection_returns_metadata_and_removes_upload(tmp_path, monkey
     assert response.json() == {"language": "en", "probability": 0.98}
     assert len(seen_paths) == 1
     assert os.path.dirname(seen_paths[0]) == str(tmp_path)
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_failed_upload_save_leaves_no_partial_file(tmp_path, monkeypatch):
+    async def failing_save(upload_file, path):
+        with open(path, "wb") as handle:
+            handle.write(b"partial")
+        raise OSError("disk full")
+
+    client = make_client(tmp_path, monkeypatch)
+    monkeypatch.setattr(routes, "save_uploaded_file", failing_save)
+    with pytest.raises(OSError):
+        client.post(
+            "/v1/audio/transcriptions/",
+            headers={"Authorization": "Bearer test-secret"},
+            files={"file": ("speech.flac", b"fixture", "audio/flac")},
+        )
     assert list(tmp_path.iterdir()) == []

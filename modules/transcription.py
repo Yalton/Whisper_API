@@ -14,7 +14,9 @@ import contextlib
 import gc
 import json
 import os
+import shutil
 import subprocess
+import tempfile
 import threading
 import time
 from datetime import datetime
@@ -184,6 +186,35 @@ async def idle_eviction_loop(
 os.makedirs(settings.UPLOAD_DIRECTORY, exist_ok=True)
 
 
+def purge_upload_directory() -> int:
+    """Remove everything left in the upload directory. Run at startup only.
+
+    Requests delete their upload in a finally block, but a process that is
+    SIGKILLed (OOM, docker kill) never reaches it, so files and chunk
+    directories from the killed request would otherwise sit in the container's
+    writable layer until it is recreated.
+    """
+    removed = 0
+    try:
+        entries = list(os.scandir(settings.UPLOAD_DIRECTORY))
+    except FileNotFoundError:
+        return 0
+    for entry in entries:
+        try:
+            if entry.is_dir(follow_symlinks=False):
+                shutil.rmtree(entry.path)
+            else:
+                os.remove(entry.path)
+            removed += 1
+        except OSError:
+            settings.logger.warning("Could not remove stale upload %s", entry.path)
+    if removed:
+        settings.logger.info(
+            "Removed %d stale entries from %s", removed, settings.UPLOAD_DIRECTORY
+        )
+    return removed
+
+
 async def save_uploaded_file(upload_file, path: str):
     async with aiofiles.open(path, "wb") as out_file:
         while chunk := await upload_file.read(1024 * 1024):
@@ -212,6 +243,118 @@ def _audio_duration(file_path: str) -> float:
         check=True,
     )
     return float(json.loads(process.stdout)["format"]["duration"])
+
+
+def _needs_chunking(duration: float) -> bool:
+    return settings.CHUNK_SECONDS > 0 and duration > settings.CHUNK_SECONDS
+
+
+def _ffmpeg_to_mono_16k(file_path: str, output_args: list[str]) -> None:
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-nostdin",
+            "-v",
+            "error",
+            "-i",
+            file_path,
+            "-vn",
+            "-ac",
+            "1",
+            "-ar",
+            "16000",
+            "-c:a",
+            "pcm_s16le",
+            *output_args,
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+
+
+def _split_audio(file_path: str, chunk_seconds: float, out_dir: str) -> list[tuple[float, str]]:
+    """Split audio into 16 kHz mono WAV chunks; return (offset, path) pairs.
+
+    Offsets are the running sum of each chunk's measured duration, so they stay
+    exact even if the segment muxer does not cut at exactly chunk_seconds.
+    """
+    _ffmpeg_to_mono_16k(
+        file_path,
+        [
+            "-f",
+            "segment",
+            "-segment_time",
+            str(chunk_seconds),
+            "-reset_timestamps",
+            "1",
+            os.path.join(out_dir, "chunk_%05d.wav"),
+        ],
+    )
+    chunks = []
+    offset = 0.0
+    for name in sorted(os.listdir(out_dir)):
+        path = os.path.join(out_dir, name)
+        chunks.append((offset, path))
+        offset += _audio_duration(path)
+    return chunks
+
+
+def _shift_segment(segment: TranscriptionSegment, offset: float) -> TranscriptionSegment:
+    return TranscriptionSegment(
+        start=segment.start + offset,
+        end=segment.end + offset,
+        text=segment.text,
+        words=[
+            {
+                **word,
+                "start": word["start"] + offset,
+                "end": word["end"] + offset,
+            }
+            for word in segment.words
+        ]
+        if segment.words is not None
+        else None,
+    )
+
+
+def _transcribe_chunked(transcribe_one, file_path: str, duration: float) -> TranscriptionResult:
+    """Transcribe chunk by chunk and merge into one result.
+
+    Language and its probability come from the first chunk; the reported
+    duration is that of the original file.
+    """
+    chunk_dir = tempfile.mkdtemp(prefix="chunks_", dir=settings.UPLOAD_DIRECTORY)
+    try:
+        chunks = _split_audio(file_path, settings.CHUNK_SECONDS, chunk_dir)
+        settings.logger.info(
+            "Transcribing %.0fs of audio in %d chunks of up to %.0fs",
+            duration,
+            len(chunks),
+            settings.CHUNK_SECONDS,
+        )
+        segments = []
+        first = None
+        for index, (offset, chunk_path) in enumerate(chunks):
+            settings.logger.info(
+                "Transcribing chunk %d/%d at offset %.0fs", index + 1, len(chunks), offset
+            )
+            result = transcribe_one(chunk_path)
+            if first is None:
+                first = result
+            segments.extend(_shift_segment(segment, offset) for segment in result.segments)
+            # Drop the finished chunk now rather than holding all of them on disk.
+            os.remove(chunk_path)
+        if first is None:
+            raise ValueError(f"ffmpeg produced no chunks for {file_path}")
+        return TranscriptionResult(
+            segments=segments,
+            language=first.language,
+            language_probability=first.language_probability,
+            duration=duration,
+        )
+    finally:
+        shutil.rmtree(chunk_dir, ignore_errors=True)
 
 
 _QWEN_LANGUAGE_NAMES = {
@@ -312,9 +455,21 @@ def _transcribe_qwen(model, file_path, include_word_timestamps, language):
 async def detect_language(file_path: str):
     if settings.ASR_BACKEND == "whisper":
         def run_whisper_detection():
-            with model_session() as model:
-                _, info = model.transcribe(file_path)
-                return info.language, info.language_probability
+            # transcribe() decodes the whole file before detecting, so for
+            # long audio detect on the first chunk only.
+            if not _needs_chunking(_audio_duration(file_path)):
+                with model_session() as model:
+                    _, info = model.transcribe(file_path)
+                    return info.language, info.language_probability
+            chunk_dir = tempfile.mkdtemp(prefix="detect_", dir=settings.UPLOAD_DIRECTORY)
+            try:
+                head = os.path.join(chunk_dir, "head.wav")
+                _ffmpeg_to_mono_16k(file_path, ["-t", str(settings.CHUNK_SECONDS), head])
+                with model_session() as model:
+                    _, info = model.transcribe(head)
+                    return info.language, info.language_probability
+            finally:
+                shutil.rmtree(chunk_dir, ignore_errors=True)
 
         return await asyncio.to_thread(run_whisper_detection)
 
@@ -327,14 +482,20 @@ async def transcribe_audio(
     include_word_timestamps: bool = False,
     language: str | None = None,
 ) -> TranscriptionResult:
-    def run_transcription():
+    def transcribe_one(path):
         with model_session() as model:
             if settings.ASR_BACKEND == "qwen3":
                 return _transcribe_qwen(
-                    model, file_path, include_word_timestamps, language
+                    model, path, include_word_timestamps, language
                 )
             return _transcribe_whisper(
-                model, file_path, include_word_timestamps, language
+                model, path, include_word_timestamps, language
             )
+
+    def run_transcription():
+        duration = _audio_duration(file_path)
+        if _needs_chunking(duration):
+            return _transcribe_chunked(transcribe_one, file_path, duration)
+        return transcribe_one(file_path)
 
     return await asyncio.to_thread(run_transcription)

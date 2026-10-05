@@ -7,6 +7,10 @@ services:
     ports:
       - "${WHISPER_API_PORT:-8001}:8000"
     runtime: nvidia
+    # Hard cap so a runaway request is OOM-killed inside this container rather
+    # than triggering a host-wide OOM on mediabox. Swap is not added on top.
+    mem_limit: 12g
+    memswap_limit: 12g
     # Driver 535 (CUDA 12.2) + CUDA 12.8 image: mask the bundled
     # forward-compat libs or CUDA silently falls back to CPU.
     tmpfs:
@@ -24,6 +28,9 @@ services:
       - QWEN_MAX_BATCH_SIZE=${QWEN_MAX_BATCH_SIZE:-8}
       # Seconds idle before either backend releases its weights.
       - ASR_IDLE_TIMEOUT=${ASR_IDLE_TIMEOUT:-300}
+      # Audio longer than this is transcribed in chunks of this many seconds,
+      # bounding host RAM per request. 0 disables splitting.
+      - ASR_CHUNK_SECONDS=${ASR_CHUNK_SECONDS:-1800}
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility
     healthcheck:

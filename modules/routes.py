@@ -16,6 +16,14 @@ from .utils import download_youtube_audio, get_auth_token
 
 router = APIRouter()
 
+
+def _remove_upload(file_path):
+    if file_path and os.path.isfile(file_path):
+        try:
+            os.remove(file_path)
+        except OSError:
+            settings.logger.warning("Could not remove temporary upload %s", file_path)
+
 @router.post("/v1/test/", summary="Test Endpoint", description="A simple test endpoint to check the API's responsiveness.")
 async def test_api():
     try:
@@ -42,7 +50,12 @@ async def language_detection(
         file_path = os.path.join(
             settings.UPLOAD_DIRECTORY, f"{uuid.uuid4().hex}{safe_suffix}"
         )
-        await save_uploaded_file(file, file_path)
+        try:
+            await save_uploaded_file(file, file_path)
+        except BaseException:
+            # A failed or cancelled save would otherwise leave a partial file.
+            _remove_upload(file_path)
+            raise
     elif youtube_url:
         settings.logger.info(f"Downloading YouTube video for language detection: {youtube_url}")
         file_path = download_youtube_audio(youtube_url, settings.UPLOAD_DIRECTORY)
@@ -56,11 +69,7 @@ async def language_detection(
             "probability": probability
         }
     finally:
-        if file_path and os.path.isfile(file_path):
-            try:
-                os.remove(file_path)
-            except OSError:
-                settings.logger.warning("Could not remove temporary upload %s", file_path)
+        _remove_upload(file_path)
 
 
 @router.post("/v1/audio/transcriptions/", summary="Transcription endpoint", description="Endpoint to transcribe audio in provided clip or youtube video")
@@ -91,7 +100,12 @@ async def transcribe_upload_file(
         file_path = os.path.join(
             settings.UPLOAD_DIRECTORY, f"{uuid.uuid4().hex}{safe_suffix}"
         )
-        await save_uploaded_file(file, file_path)
+        try:
+            await save_uploaded_file(file, file_path)
+        except BaseException:
+            # A failed or cancelled save would otherwise leave a partial file.
+            _remove_upload(file_path)
+            raise
     elif youtube_url:
         file_path = download_youtube_audio(youtube_url, settings.UPLOAD_DIRECTORY)
     else:
@@ -150,8 +164,4 @@ async def transcribe_upload_file(
         settings.logger.error(f"Unhandled exception: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Internal server error")
     finally:
-        if file_path and os.path.isfile(file_path):
-            try:
-                os.remove(file_path)
-            except OSError:
-                settings.logger.warning("Could not remove temporary upload %s", file_path)
+        _remove_upload(file_path)
