@@ -52,6 +52,9 @@ def fake_model(monkeypatch):
             compute_type="int8",
         ),
     )
+    # These tests pass paths that do not exist; keep them below the chunking
+    # threshold without shelling out to ffprobe.
+    monkeypatch.setattr(transcription, "_audio_duration", lambda _: 1.0)
     transcription.reset_model_state()
     yield
     transcription.reset_model_state()

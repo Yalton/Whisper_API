@@ -26,6 +26,11 @@ class Settings:
     IDLE_TIMEOUT_SECONDS = float(
         os.getenv("ASR_IDLE_TIMEOUT", os.getenv("WHISPER_IDLE_TIMEOUT", "300"))
     )
+    # Audio longer than this many seconds is split into 16 kHz mono chunks of
+    # this length and transcribed one chunk at a time. faster-whisper decodes
+    # the whole input into RAM before it starts, so a 4-hour file peaked at
+    # ~18-21 GB and was OOM-killed. Set to 0 to disable splitting.
+    CHUNK_SECONDS = float(os.getenv("ASR_CHUNK_SECONDS", "1800"))
     logger = logging.getLogger()
 
 
