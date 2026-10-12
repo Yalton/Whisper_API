@@ -8,7 +8,7 @@ services:
       - "${WHISPER_API_PORT:-8001}:8000"
     runtime: nvidia
     # Hard cap so a runaway request is OOM-killed inside this container rather
-    # than triggering a host-wide OOM on mediabox. Swap is not added on top.
+    # than triggering a host-wide OOM on the host. Swap is not added on top.
     mem_limit: 12g
     memswap_limit: 12g
     # Driver 535 (CUDA 12.2) + CUDA 12.8 image: mask the bundled
