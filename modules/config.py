@@ -31,6 +31,10 @@ class Settings:
     # the whole input into RAM before it starts, so a 4-hour file peaked at
     # ~18-21 GB and was OOM-killed. Set to 0 to disable splitting.
     CHUNK_SECONDS = float(os.getenv("ASR_CHUNK_SECONDS", "1800"))
+    # Whisper only: >0 runs faster-whisper's BatchedInferencePipeline, which
+    # splits audio on speech (Silero VAD) and decodes that many segments per
+    # GPU batch. 0 keeps the sequential decoder.
+    WHISPER_BATCH_SIZE = int(os.getenv("WHISPER_BATCH_SIZE", "0"))
     logger = logging.getLogger()
 
 
