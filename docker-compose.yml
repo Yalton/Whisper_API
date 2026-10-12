@@ -31,6 +31,9 @@ services:
       # Audio longer than this is transcribed in chunks of this many seconds,
       # bounding host RAM per request. 0 disables splitting.
       - ASR_CHUNK_SECONDS=${ASR_CHUNK_SECONDS:-1800}
+      # Whisper decodes this many speech segments per GPU batch; 0 is the slower
+      # sequential decoder. 8 was as fast as 16 on the 4090 with ~2.5 GB less VRAM.
+      - WHISPER_BATCH_SIZE=${WHISPER_BATCH_SIZE:-8}
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility
     healthcheck:

@@ -213,6 +213,12 @@ The application's behavior can be customized using environment variables. When r
   FlashAttention extension.
 - `QWEN_MAX_NEW_TOKENS`: Generation ceiling for long audio. Defaults to `4096`.
 - `QWEN_MAX_BATCH_SIZE`: Transformers-backend batch limit. Defaults to `8`.
+- `WHISPER_BATCH_SIZE`: Whisper only. Above `0`, uses faster-whisper's
+  batched pipeline, which splits audio on speech with Silero VAD and decodes
+  that many segments per GPU batch. Defaults to `0` (sequential) in the app and
+  `8` in `docker-compose.yml`. On an RTX 4090, an hour of film audio took 24 s
+  instead of 331 s; at batch size 8 the process peaked at about 7.5 GB of VRAM
+  versus about 4.5 GB sequential.
 - `ASR_IDLE_TIMEOUT`: Seconds before inactive model weights are released.
   Defaults to `300`; set to `0` to keep the selected model resident.
 - `NVIDIA_VISIBLE_DEVICES`: Specifies which GPUs to use (e.g., `all`, `0`, `1`).

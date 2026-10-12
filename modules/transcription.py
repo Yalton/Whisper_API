@@ -382,12 +382,21 @@ def _language_code(language: str) -> str:
 
 
 def _transcribe_whisper(model, file_path, include_word_timestamps, language):
-    segments, info = model.transcribe(
-        file_path,
+    options = dict(
         beam_size=5,
         word_timestamps=include_word_timestamps,
         language=language,
     )
+    if settings.WHISPER_BATCH_SIZE > 0:
+        # The sequential decoder runs one 30 s window at a time and leaves the
+        # GPU mostly idle; batching windows is several times faster on long audio.
+        from faster_whisper import BatchedInferencePipeline
+
+        segments, info = BatchedInferencePipeline(model=model).transcribe(
+            file_path, batch_size=settings.WHISPER_BATCH_SIZE, **options
+        )
+    else:
+        segments, info = model.transcribe(file_path, **options)
     normalized = [
         TranscriptionSegment(
             start=segment.start,
