@@ -91,6 +91,14 @@ def _load_parakeet_model():
     model = ASRModel.from_pretrained(
         model_name=settings.PARAKEET_MODEL, map_location=device
     )
+    if settings.PARAKEET_LOCAL_ATTENTION > 0:
+        # Full attention grows with the square of the input: a 20-minute chunk
+        # asked for 13.4 GiB more on top of 17.6 GiB and ran out of memory on
+        # the 24 GB 4090. Limited-context attention, as NVIDIA recommends for
+        # long audio, keeps it linear.
+        context = settings.PARAKEET_LOCAL_ATTENTION
+        model.change_attention_model("rel_pos_local_attn", [context, context])
+        model.change_subsampling_conv_chunking_factor(1)
     return model.eval()
 
 

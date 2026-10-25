@@ -25,6 +25,9 @@ services:
       # Parakeet's single-pass limit is 20 minutes; longer audio is split at
       # this length (or ASR_CHUNK_SECONDS, whichever is shorter).
       - PARAKEET_CHUNK_SECONDS=${PARAKEET_CHUNK_SECONDS:-1200}
+      # Limited-context attention window in 80 ms frames; 0 is full attention,
+      # which runs out of memory on 20-minute chunks on a 24 GB card.
+      - PARAKEET_LOCAL_ATTENTION=${PARAKEET_LOCAL_ATTENTION:-256}
       # Seconds idle before each backend releases its weights.
       - ASR_IDLE_TIMEOUT=${ASR_IDLE_TIMEOUT:-300}
       # Audio longer than this is transcribed in chunks of this many seconds,

@@ -246,6 +246,10 @@ The application's behavior can be customized using environment variables. When r
   pass, so it always splits longer audio into chunks of this length, or of
   `ASR_CHUNK_SECONDS` if that is shorter, even when `ASR_CHUNK_SECONDS` is `0`.
   Defaults to `1200`.
+- `PARAKEET_LOCAL_ATTENTION`: Parakeet's limited-context attention window, in
+  80 ms frames each side. Defaults to `256`, as NVIDIA recommends for long
+  audio. `0` restores full attention, which ran out of memory on a 20-minute
+  chunk on a 24 GB RTX 4090.
 - `ASR_IDLE_TIMEOUT`: Seconds before inactive model weights are released.
   Defaults to `300`; set to `0` to keep loaded models resident.
 - `NVIDIA_VISIBLE_DEVICES`: Specifies which GPUs to use (e.g., `all`, `0`, `1`).

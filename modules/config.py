@@ -14,6 +14,10 @@ class Settings:
     # Parakeet transcribes at most 20 minutes in one pass, so longer audio is
     # always split into chunks no longer than this.
     PARAKEET_CHUNK_SECONDS = float(os.getenv("PARAKEET_CHUNK_SECONDS", "1200"))
+    # Frames of left and right context for Parakeet's limited-context attention
+    # (one frame is 80 ms). 0 keeps full attention, which needs more VRAM than
+    # a 24 GB card has for a 20-minute chunk.
+    PARAKEET_LOCAL_ATTENTION = int(os.getenv("PARAKEET_LOCAL_ATTENTION", "256"))
     AUTH_TOKEN = os.getenv("AUTH_TOKEN", "")
     UPLOAD_DIRECTORY = "/tmp/uploaded_audio_files"
     # Seconds the model may sit unused before its VRAM is released. The next
