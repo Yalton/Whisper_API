@@ -32,8 +32,12 @@ services:
       # bounding host RAM per request. 0 disables splitting.
       - ASR_CHUNK_SECONDS=${ASR_CHUNK_SECONDS:-1800}
       # Whisper decodes this many speech segments per GPU batch; 0 is the slower
-      # sequential decoder. 8 was as fast as 16 on the 4090 with ~2.5 GB less VRAM.
-      - WHISPER_BATCH_SIZE=${WHISPER_BATCH_SIZE:-8}
+      # sequential decoder. 8 was as fast as 16 on the 4090 with ~2.5 GB less VRAM,
+      # but batching loses speech in fast commentary over video audio: on 180 s of
+      # a reaction stream it kept 408 words (VAD dropped 82-101 s and 152-180 s)
+      # against 608 sequential, ~10 s for the sequential pass. Keep 0 unless a
+      # caller only needs rough text.
+      - WHISPER_BATCH_SIZE=${WHISPER_BATCH_SIZE:-0}
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility
     healthcheck:

@@ -191,6 +191,14 @@ curl http://localhost:8000/v1/audio/transcriptions/ \
 ```
 The response: [Response](docs/word.json)
 
+#### Prompt
+
+`prompt` works as in the OpenAI API: Whisper continues in the style of the
+text you give it. Without one, large-v3 can transcribe a whole stream in
+lowercase with no punctuation, which leaves callers no sentence boundaries.
+A short punctuated prompt such as `Hello, everyone. Welcome back!` fixes
+that. Qwen3-ASR ignores it and punctuates on its own.
+
 
 ### Configuration
 
@@ -215,10 +223,11 @@ The application's behavior can be customized using environment variables. When r
 - `QWEN_MAX_BATCH_SIZE`: Transformers-backend batch limit. Defaults to `8`.
 - `WHISPER_BATCH_SIZE`: Whisper only. Above `0`, uses faster-whisper's
   batched pipeline, which splits audio on speech with Silero VAD and decodes
-  that many segments per GPU batch. Defaults to `0` (sequential) in the app and
-  `8` in `docker-compose.yml`. On an RTX 4090, an hour of film audio took 24 s
-  instead of 331 s; at batch size 8 the process peaked at about 7.5 GB of VRAM
-  versus about 4.5 GB sequential.
+  that many segments per GPU batch. Defaults to `0` (sequential). On an RTX
+  4090, an hour of film audio took 24 s instead of 331 s; at batch size 8 the
+  process peaked at about 7.5 GB of VRAM versus about 4.5 GB sequential. Batching
+  loses speech in fast commentary over video audio: on 180 s of a reaction
+  stream it kept 408 of the 608 words the sequential decoder found.
 - `ASR_IDLE_TIMEOUT`: Seconds before inactive model weights are released.
   Defaults to `300`; set to `0` to keep the selected model resident.
 - `NVIDIA_VISIBLE_DEVICES`: Specifies which GPUs to use (e.g., `all`, `0`, `1`).

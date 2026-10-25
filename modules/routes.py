@@ -89,6 +89,8 @@ async def transcribe_upload_file(
     response_format: Optional[str] = Form(default="raw_text"),
     model: Optional[str] = Form(default=None),
     language: Optional[str] = Form(default=None),
+    # OpenAI-compatible: text that seeds the decoder's style, e.g. punctuation.
+    prompt: Optional[str] = Form(default=None),
     authorization: str = Depends(get_auth_token)  # Add this line
 ):
     start_time = datetime.now()
@@ -127,6 +129,7 @@ async def transcribe_upload_file(
             file_path,
             include_word_timestamps=include_word_timestamps,
             language=language,
+            prompt=prompt,
         )
         
         transcription_text = " ".join([segment.text for segment in result.segments])

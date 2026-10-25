@@ -381,12 +381,16 @@ def _language_code(language: str) -> str:
     return _QWEN_LANGUAGE_CODES.get(language.lower(), language)
 
 
-def _transcribe_whisper(model, file_path, include_word_timestamps, language):
+def _transcribe_whisper(model, file_path, include_word_timestamps, language, prompt=None):
     options = dict(
         beam_size=5,
         word_timestamps=include_word_timestamps,
         language=language,
     )
+    if prompt:
+        # Whisper copies the prompt's style. Without one, large-v3 can settle
+        # into lowercase text with no punctuation for a whole stream.
+        options["initial_prompt"] = prompt
     if settings.WHISPER_BATCH_SIZE > 0:
         # The sequential decoder runs one 30 s window at a time and leaves the
         # GPU mostly idle; batching windows is several times faster on long audio.
@@ -490,6 +494,7 @@ async def transcribe_audio(
     file_path: str,
     include_word_timestamps: bool = False,
     language: str | None = None,
+    prompt: str | None = None,
 ) -> TranscriptionResult:
     def transcribe_one(path):
         with model_session() as model:
@@ -497,8 +502,9 @@ async def transcribe_audio(
                 return _transcribe_qwen(
                     model, path, include_word_timestamps, language
                 )
+            # Qwen3-ASR has no decoder prompt; it punctuates on its own.
             return _transcribe_whisper(
-                model, path, include_word_timestamps, language
+                model, path, include_word_timestamps, language, prompt
             )
 
     def run_transcription():

@@ -20,8 +20,11 @@ from modules.models import TranscriptionSegment
 from modules.models import TranscriptionResult
 
 
-def make_client(tmp_path, monkeypatch, seen_languages=None):
-    async def fake_transcribe_audio(_, include_word_timestamps=False, language=None):
+def make_client(tmp_path, monkeypatch, seen_languages=None, seen_prompts=None):
+    async def fake_transcribe_audio(_, include_word_timestamps=False, language=None,
+                                    prompt=None):
+        if seen_prompts is not None:
+            seen_prompts.append(prompt)
         assert include_word_timestamps is True
         if seen_languages is not None:
             seen_languages.append(language)
@@ -121,6 +124,25 @@ def test_language_defaults_to_auto_detection(tmp_path, monkeypatch):
     )
     assert response.status_code == 200
     assert seen_languages == [None]
+
+
+def test_prompt_form_field_reaches_the_decoder(tmp_path, monkeypatch):
+    seen_prompts = []
+    client = make_client(tmp_path, monkeypatch, seen_prompts=seen_prompts)
+
+    response = client.post(
+        "/v1/audio/transcriptions",
+        headers={"Authorization": "Bearer test-secret"},
+        files={"file": ("sample.wav", b"audio", "audio/wav")},
+        data={
+            "response_format": "verbose_json",
+            "timestamp_granularities[]": ["word"],
+            "prompt": "Hello, everyone. Welcome back!",
+        },
+    )
+
+    assert response.status_code == 200
+    assert seen_prompts == ["Hello, everyone. Welcome back!"]
 
 
 def test_auth_accepts_legacy_raw_token(tmp_path, monkeypatch):
