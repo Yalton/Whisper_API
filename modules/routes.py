@@ -7,6 +7,7 @@ from datetime import datetime
 from .transcription import (
     configured_model_name,
     detect_language,
+    resolve_backend,
     save_uploaded_file,
     transcribe_audio,
 )
@@ -41,6 +42,7 @@ async def language_detection(
     background_tasks: BackgroundTasks,
     file: Optional[UploadFile] = File(None),
     youtube_url: Optional[str] = Form(None), 
+    model: Optional[str] = Form(default=None),
     authorization: str = Depends(get_auth_token)  # Add this line
 ):
     file_path = None
@@ -63,11 +65,15 @@ async def language_detection(
         raise HTTPException(status_code=400, detail="Must provide either a file or a YouTube URL")
 
     try:
-        language, probability = await detect_language(file_path)
+        language, probability = await detect_language(
+            file_path, backend=resolve_backend(model)
+        )
         return {
             "language": language,
             "probability": probability
         }
+    except NotImplementedError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     finally:
         _remove_upload(file_path)
 
@@ -87,6 +93,8 @@ async def transcribe_upload_file(
         default=None, alias="timestamp_granularities"
     ),
     response_format: Optional[str] = Form(default="raw_text"),
+    # Picks the backend: `parakeet` (or any name containing it) for Parakeet,
+    # `whisper-1` or a Whisper size for Whisper, anything else for ASR_BACKEND.
     model: Optional[str] = Form(default=None),
     language: Optional[str] = Form(default=None),
     # OpenAI-compatible: text that seeds the decoder's style, e.g. punctuation.
@@ -124,12 +132,14 @@ async def transcribe_upload_file(
                 if part.strip()
             )
         include_word_timestamps = "word" in granularities
-        
+        backend = resolve_backend(model)
+
         result = await transcribe_audio(
             file_path,
             include_word_timestamps=include_word_timestamps,
             language=language,
             prompt=prompt,
+            backend=backend,
         )
         
         transcription_text = " ".join([segment.text for segment in result.segments])
@@ -142,7 +152,7 @@ async def transcribe_upload_file(
             "duration": result.duration,
             "language_probability": result.language_probability,
             "filename": file_name,
-            "model": model or configured_model_name(),
+            "model": configured_model_name(backend),
         }
 
         if response_format == "verbose_json":

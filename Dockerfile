@@ -3,9 +3,8 @@ FROM nvidia/cuda:12.4.1-cudnn-runtime-ubuntu22.04
 # Set a working directory
 WORKDIR /app
 
-# Both CTranslate2 (Whisper) and PyTorch (Qwen) use the CUDA runtime in this
-# image. Qwen uses PyTorch SDPA by default, avoiding a compile-time dependency
-# on FlashAttention while retaining 4090 acceleration.
+# Both CTranslate2 (Whisper) and PyTorch (Parakeet, via NeMo) use the CUDA
+# runtime in this image.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 \
     python3-pip \
