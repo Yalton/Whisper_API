@@ -38,12 +38,13 @@
 ## About The Project
 
 This project provides an easy-to-use, self-hosted speech-to-text (ASR) API for
-audio files and YouTube videos. It supports two interchangeable local backends:
+audio files and YouTube videos. It serves two local backends side by side, and
+each request picks one:
 
 - [faster-whisper](https://github.com/SYSTRAN/faster-whisper), the mature and
   resource-efficient default.
-- [Qwen3-ASR](https://github.com/QwenLM/Qwen3-ASR), a newer multilingual model
-  with strong recognition of accents, dialects, singing, and difficult audio.
+- [NVIDIA Parakeet](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3), a fast
+  FastConformer-TDT model for English and 24 other European languages.
 
 This is an ASR/speech-to-text service. It does not perform TTS/text-to-speech.
 
@@ -52,7 +53,7 @@ This is an ASR/speech-to-text service. It does not perform TTS/text-to-speech.
 - Audio file transcription
 - YouTube video audio transcription
 - Language detection
-- Selectable Whisper or Qwen3-ASR inference
+- Whisper or Parakeet inference, chosen per request
 - Authorization for secure API access
 
 ### Built With
@@ -61,7 +62,7 @@ This section should list any major frameworks/libraries used to bootstrap your p
 - [FastAPI](https://fastapi.tiangolo.com/)
 - [yt-dlp](https://github.com/yt-dlp/yt-dlp)
 - [faster-whisper](https://github.com/SYSTRAN/faster-whisper.git)
-- [Qwen3-ASR](https://github.com/QwenLM/Qwen3-ASR)
+- [NVIDIA NeMo](https://github.com/NVIDIA/NeMo) (Parakeet)
 
 
 ## Getting Started
@@ -191,6 +192,34 @@ curl http://localhost:8000/v1/audio/transcriptions/ \
 ```
 The response: [Response](docs/word.json)
 
+#### Prompt
+
+`prompt` works as in the OpenAI API: Whisper continues in the style of the
+text you give it. Without one, large-v3 can transcribe a whole stream in
+lowercase with no punctuation, which leaves callers no sentence boundaries.
+A short punctuated prompt such as `Hello, everyone. Welcome back!` fixes
+that. Parakeet ignores it and punctuates on its own.
+
+#### Choosing a backend
+
+The OpenAI-style `model` field picks the backend for each request:
+
+- `parakeet`, or any name containing it such as `nvidia/parakeet-tdt-0.6b-v3`,
+  uses Parakeet.
+- `whisper-1`, or a Whisper size such as `large-v3`, uses Whisper.
+- Anything else, or no `model` field, uses `ASR_BACKEND` (Whisper by default).
+
+```sh
+curl http://localhost:8001/v1/audio/transcriptions \
+  -H "Authorization: Bearer ${AUTH_TOKEN}" \
+  -F "file=@speech.wav" \
+  -F "model=parakeet"
+```
+
+The response's `model` names the checkpoint that ran. Each model loads on its
+first request and is released after `ASR_IDLE_TIMEOUT` seconds unused,
+independently of the other, so both can be resident at once.
+
 
 ### Configuration
 
@@ -200,27 +229,29 @@ The application's behavior can be customized using environment variables. When r
 
 - `AUTH_TOKEN`: Token used for authenticating to the API. Supply it as
   `Authorization: Bearer <token>`. The legacy raw-token header remains supported.
-- `ASR_BACKEND`: `whisper` (default) or `qwen3`.
+- `ASR_BACKEND`: `whisper` (default) or `parakeet`; the backend for requests
+  whose `model` field names neither.
 - `WHISPER_MODEL_SIZE`: The model size of the Whisper model to use (e.g., `tiny`, `base`, `small`, `medium`, `large`, `large-v2`).
 - `COMPUTE_DEVICE`: Set to `cuda` to use GPU acceleration, or `cpu` for CPU processing.
-- `QWEN_ASR_MODEL`: Qwen checkpoint. Defaults to `Qwen/Qwen3-ASR-1.7B`.
-- `QWEN_ALIGNER_MODEL`: Forced-aligner checkpoint used for word timestamps.
-  Defaults to `Qwen/Qwen3-ForcedAligner-0.6B`. Set it to an empty value to
-  reduce memory use when timestamps are not needed.
-- `QWEN_DTYPE`: `auto`, `bfloat16`, `float16`, or `float32`. `auto` selects
-  BF16 on supported CUDA GPUs, FP16 on older CUDA GPUs, and FP32 on CPU.
-- `QWEN_ATTN_IMPLEMENTATION`: Defaults to `sdpa`, which requires no compiled
-  FlashAttention extension.
-- `QWEN_MAX_NEW_TOKENS`: Generation ceiling for long audio. Defaults to `4096`.
-- `QWEN_MAX_BATCH_SIZE`: Transformers-backend batch limit. Defaults to `8`.
 - `WHISPER_BATCH_SIZE`: Whisper only. Above `0`, uses faster-whisper's
   batched pipeline, which splits audio on speech with Silero VAD and decodes
-  that many segments per GPU batch. Defaults to `0` (sequential) in the app and
-  `8` in `docker-compose.yml`. On an RTX 4090, an hour of film audio took 24 s
-  instead of 331 s; at batch size 8 the process peaked at about 7.5 GB of VRAM
-  versus about 4.5 GB sequential.
+  that many segments per GPU batch. Defaults to `0` (sequential). On an RTX
+  4090, an hour of film audio took 24 s instead of 331 s; at batch size 8 the
+  process peaked at about 7.5 GB of VRAM versus about 4.5 GB sequential. Batching
+  loses speech in fast commentary over video audio: on 180 s of a reaction
+  stream it kept 408 of the 608 words the sequential decoder found.
+- `PARAKEET_MODEL`: NeMo checkpoint. Defaults to
+  `nvidia/parakeet-tdt-0.6b-v3`; `nvidia/parakeet-tdt-0.6b-v2` is English only.
+- `PARAKEET_CHUNK_SECONDS`: Parakeet transcribes at most 20 minutes in one
+  pass, so it always splits longer audio into chunks of this length, or of
+  `ASR_CHUNK_SECONDS` if that is shorter, even when `ASR_CHUNK_SECONDS` is `0`.
+  Defaults to `1200`.
+- `PARAKEET_LOCAL_ATTENTION`: Parakeet's limited-context attention window, in
+  80 ms frames each side. Defaults to `256`, as NVIDIA recommends for long
+  audio. `0` restores full attention, which ran out of memory on a 20-minute
+  chunk on a 24 GB RTX 4090.
 - `ASR_IDLE_TIMEOUT`: Seconds before inactive model weights are released.
-  Defaults to `300`; set to `0` to keep the selected model resident.
+  Defaults to `300`; set to `0` to keep loaded models resident.
 - `NVIDIA_VISIBLE_DEVICES`: Specifies which GPUs to use (e.g., `all`, `0`, `1`).
 - `NVIDIA_DRIVER_CAPABILITIES`: Set to `compute,utility` for CUDA computations.
 
@@ -228,32 +259,21 @@ Here's an example of how the `environment` section might look in your `docker-co
 
 ```yaml
 environment:
-  - ASR_BACKEND=qwen3
-  - QWEN_ASR_MODEL=Qwen/Qwen3-ASR-1.7B
-  - QWEN_ALIGNER_MODEL=Qwen/Qwen3-ForcedAligner-0.6B
+  - ASR_BACKEND=whisper
+  - WHISPER_MODEL_SIZE=large-v3
+  - PARAKEET_MODEL=nvidia/parakeet-tdt-0.6b-v3
   - ASR_IDLE_TIMEOUT=300
   - COMPUTE_DEVICE=cuda
   - NVIDIA_VISIBLE_DEVICES=all
   - NVIDIA_DRIVER_CAPABILITIES=compute,utility
 ```
 
-To retain Whisper:
-
-```yaml
-environment:
-  - ASR_BACKEND=whisper
-  - WHISPER_MODEL_SIZE=large-v3
-  - COMPUTE_DEVICE=cuda
-  - NVIDIA_VISIBLE_DEVICES=all
-  - NVIDIA_DRIVER_CAPABILITIES=compute,utility
-```
-
-Qwen does not expose confidence values equivalent to Whisper's language and
-per-word probabilities. Under the Qwen backend, `language_probability` and
-word-level `probability` are therefore returned as `null`. Word timestamps
-require the configured Qwen forced aligner. Qwen currently returns one
-top-level segment for the complete transcript; its aligned words are included
-when word timestamps are requested.
+Parakeet punctuates and capitalizes on its own and ignores `prompt`. It does
+not report the language it heard: `language` echoes the request's `language`
+field, or is `null` without one, and `language_probability` and word-level
+`probability` are `null`. The language detection endpoint takes the same
+`model` field and returns `400` for Parakeet. Chunks are cut at fixed times, so a word spoken across a 20-minute
+boundary can be split or lost.
 
 #### Editing Environment Variables
 

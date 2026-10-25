@@ -20,8 +20,14 @@ from modules.models import TranscriptionSegment
 from modules.models import TranscriptionResult
 
 
-def make_client(tmp_path, monkeypatch, seen_languages=None):
-    async def fake_transcribe_audio(_, include_word_timestamps=False, language=None):
+def make_client(tmp_path, monkeypatch, seen_languages=None, seen_prompts=None,
+                seen_backends=None):
+    async def fake_transcribe_audio(_, include_word_timestamps=False, language=None,
+                                    prompt=None, backend=None):
+        if seen_prompts is not None:
+            seen_prompts.append(prompt)
+        if seen_backends is not None:
+            seen_backends.append(backend)
         assert include_word_timestamps is True
         if seen_languages is not None:
             seen_languages.append(language)
@@ -123,6 +129,25 @@ def test_language_defaults_to_auto_detection(tmp_path, monkeypatch):
     assert seen_languages == [None]
 
 
+def test_prompt_form_field_reaches_the_decoder(tmp_path, monkeypatch):
+    seen_prompts = []
+    client = make_client(tmp_path, monkeypatch, seen_prompts=seen_prompts)
+
+    response = client.post(
+        "/v1/audio/transcriptions",
+        headers={"Authorization": "Bearer test-secret"},
+        files={"file": ("sample.wav", b"audio", "audio/wav")},
+        data={
+            "response_format": "verbose_json",
+            "timestamp_granularities[]": ["word"],
+            "prompt": "Hello, everyone. Welcome back!",
+        },
+    )
+
+    assert response.status_code == 200
+    assert seen_prompts == ["Hello, everyone. Welcome back!"]
+
+
 def test_auth_accepts_legacy_raw_token(tmp_path, monkeypatch):
     client = make_client(tmp_path, monkeypatch)
     response = client.post(
@@ -150,7 +175,7 @@ def test_auth_rejects_bad_token(tmp_path, monkeypatch):
 def test_language_detection_returns_metadata_and_removes_upload(tmp_path, monkeypatch):
     seen_paths = []
 
-    async def fake_detect_language(path):
+    async def fake_detect_language(path, backend=None):
         seen_paths.append(path)
         assert os.path.exists(path)
         return "en", 0.98
@@ -188,4 +213,72 @@ def test_failed_upload_save_leaves_no_partial_file(tmp_path, monkeypatch):
             headers={"Authorization": "Bearer test-secret"},
             files={"file": ("speech.flac", b"fixture", "audio/flac")},
         )
+    assert list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.parametrize(
+    "model, backend",
+    [
+        ("whisper-1", "whisper"),
+        ("large-v3", "whisper"),
+        ("parakeet", "parakeet"),
+        ("nvidia/parakeet-tdt-0.6b-v3", "parakeet"),
+        (None, "whisper"),
+        ("gpt-4o-transcribe", "whisper"),
+    ],
+)
+def test_model_field_selects_the_backend(tmp_path, monkeypatch, model, backend):
+    monkeypatch.setattr(settings, "ASR_BACKEND", "whisper")
+    monkeypatch.setattr(settings, "MODEL_SIZE", "large-v3")
+    monkeypatch.setattr(settings, "PARAKEET_MODEL", "nvidia/parakeet-tdt-0.6b-v3")
+    seen_backends = []
+    client = make_client(tmp_path, monkeypatch, seen_backends=seen_backends)
+    data = {"response_format": "verbose_json", "timestamp_granularities[]": ["word"]}
+    if model is not None:
+        data["model"] = model
+
+    response = client.post(
+        "/v1/audio/transcriptions",
+        headers={"Authorization": "Bearer test-secret"},
+        files={"file": ("sample.wav", b"audio", "audio/wav")},
+        data=data,
+    )
+
+    assert response.status_code == 200
+    assert seen_backends == [backend]
+    # The response names the model that actually ran, not the requested alias.
+    expected = "large-v3" if backend == "whisper" else "nvidia/parakeet-tdt-0.6b-v3"
+    assert response.json()["model"] == expected
+
+
+def test_unrecognised_model_falls_back_to_the_configured_default(tmp_path, monkeypatch):
+    monkeypatch.setattr(settings, "ASR_BACKEND", "parakeet")
+    seen_backends = []
+    client = make_client(tmp_path, monkeypatch, seen_backends=seen_backends)
+
+    client.post(
+        "/v1/audio/transcriptions",
+        headers={"Authorization": "Bearer test-secret"},
+        files={"file": ("sample.wav", b"audio", "audio/wav")},
+        data={"model": "something-else", "timestamp_granularities[]": ["word"]},
+    )
+
+    assert seen_backends == ["parakeet"]
+
+
+def test_language_detection_with_parakeet_is_a_client_error(tmp_path, monkeypatch):
+    monkeypatch.setattr(settings, "UPLOAD_DIRECTORY", str(tmp_path))
+    app = FastAPI()
+    app.include_router(routes.router)
+    client = TestClient(app)
+
+    response = client.post(
+        "/v1/audio/language_detection/",
+        headers={"Authorization": "Bearer test-secret"},
+        files={"file": ("speech.flac", b"fixture", "audio/flac")},
+        data={"model": "parakeet"},
+    )
+
+    assert response.status_code == 400
+    assert "parakeet" in response.json()["detail"]
     assert list(tmp_path.iterdir()) == []

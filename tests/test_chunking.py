@@ -60,7 +60,7 @@ def whisper(tmp_path, monkeypatch):
     monkeypatch.setattr(transcription.settings, "ASR_BACKEND", "whisper")
     monkeypatch.setattr(transcription.settings, "CHUNK_SECONDS", 2.0)
     monkeypatch.setattr(transcription.settings, "UPLOAD_DIRECTORY", str(tmp_path))
-    monkeypatch.setattr(transcription, "_load_model", lambda: model)
+    monkeypatch.setattr(transcription, "_load_model", lambda backend: model)
     transcription.reset_model_state()
     yield model
     transcription.reset_model_state()

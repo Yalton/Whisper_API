@@ -3,7 +3,7 @@ faster-whisper==1.2.1
 # PyTorch 2.6 uses CUDA 12.4 wheels, matching the deployment host's 550-series
 # NVIDIA driver. Pinning avoids pip selecting a newer CUDA 13 build.
 torch==2.6.0
-qwen-asr==0.0.6
+nemo_toolkit[asr]==3.0.0
 aiofiles==24.1.0
 python-multipart==0.0.20
 uvicorn==0.51.0

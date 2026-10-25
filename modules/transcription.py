@@ -1,8 +1,9 @@
 """Lazy, idle-evictable ASR backends.
 
 The HTTP layer consumes one normalized result shape, while model-specific
-details live here. Whisper remains the default; Qwen3-ASR can be selected with
-ASR_BACKEND=qwen3.
+details live here. Whisper and NVIDIA Parakeet are both available at once:
+each request picks one, and each model loads on first use and is released
+after it has been idle, independently of the other.
 """
 
 from .config import settings
@@ -23,9 +24,11 @@ from datetime import datetime
 from typing import Any
 
 
-_model = None
-_active = 0
-_last_used = 0.0
+BACKENDS = ("whisper", "parakeet")
+
+_models: dict[str, Any] = {}
+_active = {backend: 0 for backend in BACKENDS}
+_last_used = {backend: 0.0 for backend in BACKENDS}
 _lock = threading.Lock()
 
 
@@ -33,15 +36,41 @@ def now() -> float:
     return time.monotonic()
 
 
-def model_is_loaded() -> bool:
-    with _lock:
-        return _model is not None
+def resolve_backend(model: str | None) -> str:
+    """Map a request's OpenAI-style `model` field to a backend.
+
+    Anything naming Parakeet selects it and anything naming Whisper (including
+    `whisper-1` and bare size names such as `large-v3`) selects Whisper. Other
+    values, or none, fall back to ASR_BACKEND so existing callers that send
+    arbitrary model names keep working.
+    """
+    name = (model or "").strip().lower()
+    if "parakeet" in name or name == settings.PARAKEET_MODEL.lower():
+        return "parakeet"
+    if "whisper" in name or name == settings.MODEL_SIZE.lower() or name.startswith(
+        ("tiny", "base", "small", "medium", "large", "distil")
+    ):
+        return "whisper"
+    return settings.ASR_BACKEND
 
 
-def mark_used(at: float | None = None) -> None:
-    global _last_used
+def _backend(backend: str | None) -> str:
+    backend = settings.ASR_BACKEND if backend is None else backend
+    if backend not in BACKENDS:
+        raise ValueError(
+            f"Unsupported ASR backend {backend!r}; use 'whisper' or 'parakeet'"
+        )
+    return backend
+
+
+def model_is_loaded(backend: str | None = None) -> bool:
     with _lock:
-        _last_used = now() if at is None else at
+        return _backend(backend) in _models
+
+
+def mark_used(at: float | None = None, backend: str | None = None) -> None:
+    with _lock:
+        _last_used[_backend(backend)] = now() if at is None else at
 
 
 def _load_whisper_model():
@@ -54,114 +83,101 @@ def _load_whisper_model():
     )
 
 
-def _qwen_dtype(torch):
-    configured = settings.QWEN_DTYPE
-    if configured != "auto":
-        try:
-            return getattr(torch, configured)
-        except AttributeError as exc:
-            raise ValueError(f"Unsupported QWEN_DTYPE={configured!r}") from exc
-    if settings.COMPUTE_DEVICE == "cuda":
-        return torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
-    return torch.float32
-
-
-def _load_qwen_model():
+def _load_parakeet_model():
     import torch
-    from qwen_asr import Qwen3ASRModel
+    from nemo.collections.asr.models import ASRModel
 
-    device = "cuda:0" if settings.COMPUTE_DEVICE == "cuda" else "cpu"
-    common = {
-        "dtype": _qwen_dtype(torch),
-        "device_map": device,
-    }
-    if settings.QWEN_ATTN_IMPLEMENTATION:
-        common["attn_implementation"] = settings.QWEN_ATTN_IMPLEMENTATION
-
-    kwargs = {
-        **common,
-        "max_inference_batch_size": settings.QWEN_MAX_BATCH_SIZE,
-        "max_new_tokens": settings.QWEN_MAX_NEW_TOKENS,
-    }
-    if settings.QWEN_ALIGNER_MODEL:
-        kwargs["forced_aligner"] = settings.QWEN_ALIGNER_MODEL
-        kwargs["forced_aligner_kwargs"] = dict(common)
-    return Qwen3ASRModel.from_pretrained(settings.QWEN_MODEL, **kwargs)
-
-
-def _load_model():
-    if settings.ASR_BACKEND == "whisper":
-        return _load_whisper_model()
-    if settings.ASR_BACKEND == "qwen3":
-        return _load_qwen_model()
-    raise ValueError(
-        f"Unsupported ASR_BACKEND={settings.ASR_BACKEND!r}; use 'whisper' or 'qwen3'"
+    device = torch.device("cuda:0" if settings.COMPUTE_DEVICE == "cuda" else "cpu")
+    model = ASRModel.from_pretrained(
+        model_name=settings.PARAKEET_MODEL, map_location=device
     )
+    if settings.PARAKEET_LOCAL_ATTENTION > 0:
+        # Full attention grows with the square of the input: a 20-minute chunk
+        # asked for 13.4 GiB more on top of 17.6 GiB and ran out of memory on
+        # the 24 GB 4090. Limited-context attention, as NVIDIA recommends for
+        # long audio, keeps it linear.
+        context = settings.PARAKEET_LOCAL_ATTENTION
+        model.change_attention_model("rel_pos_local_attn", [context, context])
+        model.change_subsampling_conv_chunking_factor(1)
+    return model.eval()
+
+
+def _load_model(backend: str):
+    if backend == "parakeet":
+        return _load_parakeet_model()
+    return _load_whisper_model()
 
 
 def reset_model_state() -> None:
-    """Drop the model and counters. Also used as a test hook."""
-    global _model, _active, _last_used
+    """Drop every model and counter. Also used as a test hook."""
     with _lock:
-        _model = None
-        _active = 0
-        _last_used = 0.0
+        _models.clear()
+        for backend in BACKENDS:
+            _active[backend] = 0
+            _last_used[backend] = 0.0
     _release_runtime_memory()
 
 
 def _release_runtime_memory() -> None:
     gc.collect()
-    if settings.ASR_BACKEND == "qwen3":
-        try:
-            import torch
+    # Parakeet runs on PyTorch, whose caching allocator keeps freed blocks
+    # until asked to return them. CTranslate2 (Whisper) frees on its own.
+    try:
+        import torch
 
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-        except ImportError:
-            pass
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    except ImportError:
+        pass
 
 
 @contextlib.contextmanager
-def model_session():
-    global _model, _active, _last_used
+def model_session(backend: str | None = None):
+    backend = _backend(backend)
     with _lock:
-        if _model is None:
+        if backend not in _models:
             start = datetime.now()
             settings.logger.info(
                 "Initializing ASR model backend=%s model=%s device=%s",
-                settings.ASR_BACKEND,
-                configured_model_name(),
+                backend,
+                configured_model_name(backend),
                 settings.COMPUTE_DEVICE,
             )
-            _model = _load_model()
+            _models[backend] = _load_model(backend)
             settings.logger.info(
                 "ASR model initialized in %.2f seconds",
                 (datetime.now() - start).total_seconds(),
             )
-        _active += 1
-        model = _model
+        _active[backend] += 1
+        model = _models[backend]
     try:
         yield model
     finally:
         with _lock:
-            _active -= 1
-            _last_used = now()
+            _active[backend] -= 1
+            _last_used[backend] = now()
 
 
 def maybe_evict_idle_model(idle_timeout: float, now: float | None = None) -> bool:
-    global _model
+    """Release every loaded model idle for idle_timeout; True if any was."""
+    current = time.monotonic() if now is None else now
+    evicted = []
     with _lock:
-        if _model is None or _active > 0:
-            return False
-        current = time.monotonic() if now is None else now
-        idle_for = current - _last_used
-        if idle_for < idle_timeout:
-            return False
-        _model = None
+        for backend in list(_models):
+            if _active[backend] > 0:
+                continue
+            idle_for = current - _last_used[backend]
+            if idle_for < idle_timeout:
+                continue
+            del _models[backend]
+            evicted.append((backend, idle_for))
+    if not evicted:
+        return False
     _release_runtime_memory()
-    settings.logger.info(
-        "Released idle %s model after %.0fs idle", settings.ASR_BACKEND, idle_for
-    )
+    for backend, idle_for in evicted:
+        settings.logger.info(
+            "Released idle %s model after %.0fs idle", backend, idle_for
+        )
     return True
 
 
@@ -222,8 +238,10 @@ async def save_uploaded_file(upload_file, path: str):
     settings.logger.info("Saved file to %s", path)
 
 
-def configured_model_name() -> str:
-    return settings.QWEN_MODEL if settings.ASR_BACKEND == "qwen3" else settings.MODEL_SIZE
+def configured_model_name(backend: str | None = None) -> str:
+    if _backend(backend) == "parakeet":
+        return settings.PARAKEET_MODEL
+    return settings.MODEL_SIZE
 
 
 def _audio_duration(file_path: str) -> float:
@@ -245,8 +263,22 @@ def _audio_duration(file_path: str) -> float:
     return float(json.loads(process.stdout)["format"]["duration"])
 
 
-def _needs_chunking(duration: float) -> bool:
-    return settings.CHUNK_SECONDS > 0 and duration > settings.CHUNK_SECONDS
+def _chunk_seconds(backend: str) -> float:
+    """Chunk length for the active backend; 0 means no splitting.
+
+    Parakeet attends over the whole input at once and cannot take more than
+    PARAKEET_CHUNK_SECONDS in one pass, so it always splits at that length or
+    shorter, even with ASR_CHUNK_SECONDS=0.
+    """
+    if backend == "parakeet":
+        limit = settings.PARAKEET_CHUNK_SECONDS
+        return min(settings.CHUNK_SECONDS, limit) if settings.CHUNK_SECONDS > 0 else limit
+    return settings.CHUNK_SECONDS
+
+
+def _needs_chunking(duration: float, backend: str) -> bool:
+    chunk_seconds = _chunk_seconds(backend)
+    return chunk_seconds > 0 and duration > chunk_seconds
 
 
 def _ffmpeg_to_mono_16k(file_path: str, output_args: list[str]) -> None:
@@ -318,7 +350,9 @@ def _shift_segment(segment: TranscriptionSegment, offset: float) -> Transcriptio
     )
 
 
-def _transcribe_chunked(transcribe_one, file_path: str, duration: float) -> TranscriptionResult:
+def _transcribe_chunked(
+    transcribe_one, file_path: str, duration: float, backend: str
+) -> TranscriptionResult:
     """Transcribe chunk by chunk and merge into one result.
 
     Language and its probability come from the first chunk; the reported
@@ -326,12 +360,13 @@ def _transcribe_chunked(transcribe_one, file_path: str, duration: float) -> Tran
     """
     chunk_dir = tempfile.mkdtemp(prefix="chunks_", dir=settings.UPLOAD_DIRECTORY)
     try:
-        chunks = _split_audio(file_path, settings.CHUNK_SECONDS, chunk_dir)
+        chunk_seconds = _chunk_seconds(backend)
+        chunks = _split_audio(file_path, chunk_seconds, chunk_dir)
         settings.logger.info(
             "Transcribing %.0fs of audio in %d chunks of up to %.0fs",
             duration,
             len(chunks),
-            settings.CHUNK_SECONDS,
+            chunk_seconds,
         )
         segments = []
         first = None
@@ -357,36 +392,16 @@ def _transcribe_chunked(transcribe_one, file_path: str, duration: float) -> Tran
         shutil.rmtree(chunk_dir, ignore_errors=True)
 
 
-_QWEN_LANGUAGE_NAMES = {
-    "zh": "Chinese", "en": "English", "yue": "Cantonese", "ar": "Arabic",
-    "de": "German", "fr": "French", "es": "Spanish", "pt": "Portuguese",
-    "id": "Indonesian", "it": "Italian", "ko": "Korean", "ru": "Russian",
-    "th": "Thai", "vi": "Vietnamese", "ja": "Japanese", "tr": "Turkish",
-    "hi": "Hindi", "ms": "Malay", "nl": "Dutch", "sv": "Swedish",
-    "da": "Danish", "fi": "Finnish", "pl": "Polish", "cs": "Czech",
-    "fil": "Filipino", "fa": "Persian", "el": "Greek", "hu": "Hungarian",
-    "mk": "Macedonian", "ro": "Romanian",
-}
-_QWEN_LANGUAGE_CODES = {name.lower(): code for code, name in _QWEN_LANGUAGE_NAMES.items()}
-
-
-def _qwen_language(language: str | None) -> str | None:
-    if not language:
-        return None
-    return _QWEN_LANGUAGE_NAMES.get(language.lower(), language)
-
-
-def _language_code(language: str) -> str:
-    # Mixed-language results such as "Chinese,English" have no single ISO code.
-    return _QWEN_LANGUAGE_CODES.get(language.lower(), language)
-
-
-def _transcribe_whisper(model, file_path, include_word_timestamps, language):
+def _transcribe_whisper(model, file_path, include_word_timestamps, language, prompt=None):
     options = dict(
         beam_size=5,
         word_timestamps=include_word_timestamps,
         language=language,
     )
+    if prompt:
+        # Whisper copies the prompt's style. Without one, large-v3 can settle
+        # into lowercase text with no punctuation for a whole stream.
+        options["initial_prompt"] = prompt
     if settings.WHISPER_BATCH_SIZE > 0:
         # The sequential decoder runs one 30 s window at a time and leaves the
         # GPU mostly idle; batching windows is several times faster on long audio.
@@ -424,87 +439,112 @@ def _transcribe_whisper(model, file_path, include_word_timestamps, language):
     )
 
 
-def _transcribe_qwen(model, file_path, include_word_timestamps, language):
-    if include_word_timestamps and not settings.QWEN_ALIGNER_MODEL:
-        raise ValueError(
-            "Word timestamps require QWEN_ALIGNER_MODEL to be configured"
-        )
-    result = model.transcribe(
-        audio=file_path,
-        language=_qwen_language(language),
-        return_time_stamps=include_word_timestamps,
-    )[0]
-    duration = _audio_duration(file_path)
-    words = None
-    start, end = 0.0, duration
-    if include_word_timestamps:
-        words = [
-            {
-                "start": item.start_time,
-                "end": item.end_time,
-                "word": item.text,
-                "probability": None,
-            }
-            for item in result.time_stamps
-        ]
-        if words:
-            start, end = words[0]["start"], words[-1]["end"]
-    return TranscriptionResult(
-        segments=[
+def _transcribe_parakeet(model, file_path, include_word_timestamps, language):
+    # NeMo reads audio itself and expects 16 kHz mono; uploads can be any
+    # container ffmpeg understands, so convert first.
+    work_dir = tempfile.mkdtemp(prefix="parakeet_", dir=settings.UPLOAD_DIRECTORY)
+    try:
+        wav_path = os.path.join(work_dir, "audio.wav")
+        _ffmpeg_to_mono_16k(file_path, [wav_path])
+        duration = _audio_duration(wav_path)
+        hypothesis = model.transcribe(
+            [wav_path], batch_size=1, timestamps=True, verbose=False
+        )[0]
+    finally:
+        shutil.rmtree(work_dir, ignore_errors=True)
+
+    stamps = hypothesis.timestamp or {}
+    words = [
+        {
+            "start": item["start"],
+            "end": item["end"],
+            "word": item["word"],
+            "probability": None,
+        }
+        for item in stamps.get("word", [])
+    ]
+    segments = []
+    next_word = 0
+    for item in stamps.get("segment", []):
+        # NeMo builds each segment by joining consecutive words with spaces.
+        count = len(item["segment"].split())
+        segment_words = words[next_word:next_word + count]
+        next_word += count
+        segments.append(
             TranscriptionSegment(
-                start=start, end=end, text=result.text, words=words
+                start=item["start"],
+                end=item["end"],
+                text=item["segment"],
+                words=segment_words if include_word_timestamps else None,
             )
-        ],
-        language=_language_code(result.language),
+        )
+    if not segments and hypothesis.text:
+        segments = [
+            TranscriptionSegment(
+                start=0.0,
+                end=duration,
+                text=hypothesis.text,
+                words=words if include_word_timestamps else None,
+            )
+        ]
+    # Parakeet does not report the language it heard, so echo the caller's.
+    return TranscriptionResult(
+        segments=segments,
+        language=language,
         language_probability=None,
         duration=duration,
     )
 
 
-async def detect_language(file_path: str):
-    if settings.ASR_BACKEND == "whisper":
-        def run_whisper_detection():
-            # transcribe() decodes the whole file before detecting, so for
-            # long audio detect on the first chunk only.
-            if not _needs_chunking(_audio_duration(file_path)):
-                with model_session() as model:
-                    _, info = model.transcribe(file_path)
-                    return info.language, info.language_probability
-            chunk_dir = tempfile.mkdtemp(prefix="detect_", dir=settings.UPLOAD_DIRECTORY)
-            try:
-                head = os.path.join(chunk_dir, "head.wav")
-                _ffmpeg_to_mono_16k(file_path, ["-t", str(settings.CHUNK_SECONDS), head])
-                with model_session() as model:
-                    _, info = model.transcribe(head)
-                    return info.language, info.language_probability
-            finally:
-                shutil.rmtree(chunk_dir, ignore_errors=True)
+async def detect_language(file_path: str, backend: str | None = None):
+    backend = _backend(backend)
+    if backend == "parakeet":
+        raise NotImplementedError("The parakeet backend does not detect language")
 
-        return await asyncio.to_thread(run_whisper_detection)
+    def run_whisper_detection():
+        # transcribe() decodes the whole file before detecting, so for
+        # long audio detect on the first chunk only.
+        if not _needs_chunking(_audio_duration(file_path), backend):
+            with model_session(backend) as model:
+                _, info = model.transcribe(file_path)
+                return info.language, info.language_probability
+        chunk_dir = tempfile.mkdtemp(prefix="detect_", dir=settings.UPLOAD_DIRECTORY)
+        try:
+            head = os.path.join(chunk_dir, "head.wav")
+            _ffmpeg_to_mono_16k(file_path, ["-t", str(settings.CHUNK_SECONDS), head])
+            with model_session(backend) as model:
+                _, info = model.transcribe(head)
+                return info.language, info.language_probability
+        finally:
+            shutil.rmtree(chunk_dir, ignore_errors=True)
 
-    result = await transcribe_audio(file_path)
-    return result.language, result.language_probability
+    return await asyncio.to_thread(run_whisper_detection)
 
 
 async def transcribe_audio(
     file_path: str,
     include_word_timestamps: bool = False,
     language: str | None = None,
+    prompt: str | None = None,
+    backend: str | None = None,
 ) -> TranscriptionResult:
+    backend = _backend(backend)
+
     def transcribe_one(path):
-        with model_session() as model:
-            if settings.ASR_BACKEND == "qwen3":
-                return _transcribe_qwen(
+        with model_session(backend) as model:
+            if backend == "parakeet":
+                # Parakeet has no decoder prompt; it punctuates on its own.
+                return _transcribe_parakeet(
                     model, path, include_word_timestamps, language
                 )
             return _transcribe_whisper(
-                model, path, include_word_timestamps, language
+                model, path, include_word_timestamps, language, prompt
             )
 
     def run_transcription():
         duration = _audio_duration(file_path)
-        if _needs_chunking(duration):
-            return _transcribe_chunked(transcribe_one, file_path, duration)
+        if _needs_chunking(duration, backend):
+            return _transcribe_chunked(transcribe_one, file_path, duration, backend)
         return transcribe_one(file_path)
 
     return await asyncio.to_thread(run_transcription)

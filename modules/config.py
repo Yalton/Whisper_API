@@ -5,19 +5,19 @@ import logging
 logging.basicConfig(level=logging.INFO)
 
 class Settings:
+    # Backend for requests whose `model` field names neither Whisper nor
+    # Parakeet: `whisper` or `parakeet`.
     ASR_BACKEND = os.getenv("ASR_BACKEND", "whisper").strip().lower()
     MODEL_SIZE = os.getenv("WHISPER_MODEL_SIZE", "base")
     COMPUTE_DEVICE = os.getenv("COMPUTE_DEVICE", "cpu")
-    QWEN_MODEL = os.getenv("QWEN_ASR_MODEL", "Qwen/Qwen3-ASR-1.7B")
-    QWEN_ALIGNER_MODEL = os.getenv(
-        "QWEN_ALIGNER_MODEL", "Qwen/Qwen3-ForcedAligner-0.6B"
-    ).strip()
-    QWEN_DTYPE = os.getenv("QWEN_DTYPE", "auto").strip().lower()
-    QWEN_ATTN_IMPLEMENTATION = os.getenv(
-        "QWEN_ATTN_IMPLEMENTATION", "sdpa"
-    ).strip()
-    QWEN_MAX_NEW_TOKENS = int(os.getenv("QWEN_MAX_NEW_TOKENS", "4096"))
-    QWEN_MAX_BATCH_SIZE = int(os.getenv("QWEN_MAX_BATCH_SIZE", "8"))
+    PARAKEET_MODEL = os.getenv("PARAKEET_MODEL", "nvidia/parakeet-tdt-0.6b-v3")
+    # Parakeet transcribes at most 20 minutes in one pass, so longer audio is
+    # always split into chunks no longer than this.
+    PARAKEET_CHUNK_SECONDS = float(os.getenv("PARAKEET_CHUNK_SECONDS", "1200"))
+    # Frames of left and right context for Parakeet's limited-context attention
+    # (one frame is 80 ms). 0 keeps full attention, which needs more VRAM than
+    # a 24 GB card has for a 20-minute chunk.
+    PARAKEET_LOCAL_ATTENTION = int(os.getenv("PARAKEET_LOCAL_ATTENTION", "256"))
     AUTH_TOKEN = os.getenv("AUTH_TOKEN", "")
     UPLOAD_DIRECTORY = "/tmp/uploaded_audio_files"
     # Seconds the model may sit unused before its VRAM is released. The next

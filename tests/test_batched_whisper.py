@@ -94,3 +94,17 @@ def test_positive_batch_size_uses_the_batched_pipeline(monkeypatch):
     ]
     assert result.language == "en"
     assert result.segments[0].words == []
+
+
+def test_prompt_seeds_the_decoder_with_punctuated_text(monkeypatch):
+    # Without a prompt large-v3 kept a lowercase, unpunctuated style for a
+    # whole 15-minute stream; a short punctuated prompt restores sentences.
+    monkeypatch.setattr(transcription.settings, "WHISPER_BATCH_SIZE", 0)
+    model = FakeWhisperModel()
+
+    transcription._transcribe_whisper(model, "a.wav", True, "en", "Hello, everyone.")
+
+    assert model.calls == [
+        ("a.wav", {"beam_size": 5, "word_timestamps": True, "language": "en",
+                   "initial_prompt": "Hello, everyone."})
+    ]

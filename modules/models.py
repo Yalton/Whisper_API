@@ -10,6 +10,7 @@ class TranscriptionSegment(BaseModel):
 
 class TranscriptionResult(BaseModel):
     segments: List[TranscriptionSegment]
-    language: str
+    # None when the backend does not report a language (Parakeet).
+    language: Optional[str] = None
     language_probability: Optional[float] = None
     duration: float

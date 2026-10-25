@@ -46,7 +46,7 @@ def fake_model(monkeypatch):
     monkeypatch.setattr(
         transcription,
         "_load_model",
-        lambda: FakeWhisperModel(
+        lambda backend: FakeWhisperModel(
             transcription.settings.MODEL_SIZE,
             device=transcription.settings.COMPUTE_DEVICE,
             compute_type="int8",
