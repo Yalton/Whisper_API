@@ -1,0 +1,6 @@
+# Whisper_API
+
+@[base](/data/fast/Projects/Tech/AI/project-conventions/base.md)
+@[web-service](/data/fast/Projects/Tech/AI/project-conventions/web-service.md)
+
+See [CLAUDE.md](CLAUDE.md) for project-specific notes and `.fleet.json` for declared types, git authority, and verify command.
